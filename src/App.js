@@ -205,6 +205,20 @@ function calcNetTN_RH(agent, pointages, monthParams, mk, dtToUsd) {
   return { netDT, netUSD: netDT * dtToUsd };
 }
 
+// Charges sociales RDC — à la charge de l'entreprise, jamais déduites de l'agent
+// (calculées sur le salaire fixe mensuel, identique à la logique du Suivi RH)
+const TAUX_RDC_RH = { cnssSal: 0.05, ipr: 0.15, cnssPat: 0.13, inpp: 0.03, onem: 0.02 };
+function calcChargesRDC_RH(agent, monthParams, mk) {
+  const mp = monthParams.find(m => m.agentId === agent.id && m.mois === mk) || { salaireFixe: 0 };
+  const brut = mp.salaireFixe || 0;
+  const cnssSal = brut * TAUX_RDC_RH.cnssSal;
+  const ipr = Math.max(0, (brut - cnssSal) * TAUX_RDC_RH.ipr);
+  const cnssPat = brut * TAUX_RDC_RH.cnssPat;
+  const inpp = brut * TAUX_RDC_RH.inpp;
+  const onem = brut * TAUX_RDC_RH.onem;
+  return { cnssSal, ipr, cnssPat, inpp, onem, total: cnssSal + ipr + cnssPat + inpp + onem };
+}
+
 export default function App() {
   const [unlocked, setUnlocked] = useState(false);
   const [storedPassword, setStoredPassword] = useState(null);
@@ -227,7 +241,7 @@ export default function App() {
   const [pointagesRH, setPointagesRH] = useState([]);
   const [monthParamsRH, setMonthParamsRH] = useState([]);
   const [dtToUsdRH, setDtToUsdRH] = useState(DT_TO_USD_DEFAULT);
-  const [moisSelectionne, setMoisSelectionne] = useState(todayISO());
+  const [moisSelectionne, setMoisSelectionne] = useState(todayISO().slice(0, 7));
 
   // ─── Vérifier le mot de passe au démarrage ──────────────────
   useEffect(() => {
@@ -344,6 +358,15 @@ export default function App() {
   const agentsRHTN = agentsRH.filter(a => a.localisation === "TN");
   const moisRH = monthKey(moisSelectionne);
 
+  // Liste de tous les mois où il existe des données (recettes, dépenses, ou paramètres RH)
+  const moisDisponibles = useMemo(() => {
+    const set = new Set();
+    recettes.forEach(r => set.add(monthKey(r.date)));
+    depenses.forEach(d => set.add(monthKey(d.date)));
+    monthParamsRH.forEach(m => set.add(m.mois));
+    return Array.from(set).sort().reverse();
+  }, [recettes, depenses, monthParamsRH]);
+
   // Total des salaires versés ce mois = directement calculé depuis le Suivi RH
   // (charges sociales à la charge de l'entreprise, jamais déduites de l'agent)
   const totalSalairesMois =
@@ -364,6 +387,7 @@ export default function App() {
         {page === "depenses" && <DepensesPage depenses={depenses} addDepense={addDepense} removeDepense={removeDepense} taux={taux} />}
         {page === "salaires_rh" && <SalairesRHPage agentsRDC={agentsRHRDC} agentsTN={agentsRHTN} pointages={pointagesRH} monthParams={monthParamsRH} dtToUsd={dtToUsdRH} setDtToUsd={setDtToUsdRH} moisSelectionne={moisSelectionne} setMoisSelectionne={setMoisSelectionne} moisRH={moisRH} />}
         {page === "campagnes" && <CampagnesPage campagnes={campagnes} addCampagne={addCampagne} removeCampagne={removeCampagne} taux={taux} />}
+        {page === "recap_mensuel" && <RecapMensuelPage moisDisponibles={moisDisponibles} recettesUSD={recettesUSD} depensesUSD={depensesUSD} agentsRDC={agentsRHRDC} agentsTN={agentsRHTN} pointages={pointagesRH} monthParams={monthParamsRH} dtToUsd={dtToUsdRH} />}
         {page === "parametres" && <ParametresPage onChangePassword={handleChangePassword} />}
       </div>
     </div>
@@ -411,7 +435,7 @@ function LoginScreen({ pwInput, setPwInput, onSubmit, error }) {
 // SIDEBAR
 // ============================================================
 function Sidebar({ page, setPage, onLock }) {
-  const items = [["dashboard", "Tableau de bord"], ["recettes", "Recettes"], ["depenses", "Dépenses"], ["salaires_rh", "Salaires"], ["campagnes", "Campagnes Clients"], ["parametres", "Paramètres"]];
+  const items = [["dashboard", "Tableau de bord"], ["recettes", "Recettes"], ["depenses", "Dépenses"], ["salaires_rh", "Salaires"], ["campagnes", "Campagnes Clients"], ["recap_mensuel", "Récapitulatif mensuel"], ["parametres", "Paramètres"]];
   return (
     <div style={{ width: 230, background: NAVY, color: "white", padding: "24px 0", flexShrink: 0 }}>
       <div style={{ padding: "0 24px 24px", borderBottom: "1px solid rgba(255,255,255,.1)", marginBottom: 16 }}>
@@ -537,7 +561,8 @@ function DepensesPage({ depenses, addDepense, removeDepense, taux }) {
 // (charges sociales assumées par l'entreprise, jamais déduites de l'agent)
 // ============================================================
 function SalairesRHPage({ agentsRDC, agentsTN, pointages, monthParams, dtToUsd, setDtToUsd, moisSelectionne, setMoisSelectionne, moisRH }) {
-  const monthLabel = new Date(moisSelectionne).toLocaleDateString("fr-FR", { month: "long", year: "numeric" });
+  const [yLabel, mLabel] = moisSelectionne.split("-").map(Number);
+  const monthLabel = new Date(yLabel, mLabel - 1, 1).toLocaleDateString("fr-FR", { month: "long", year: "numeric" });
   return (
     <>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 22, flexWrap: "wrap", gap: 12 }}>
@@ -545,7 +570,7 @@ function SalairesRHPage({ agentsRDC, agentsTN, pointages, monthParams, dtToUsd, 
           <h1 style={{ fontSize: 22, margin: 0, fontWeight: 700, color: NAVY }}>Salaires — {monthLabel}</h1>
           <div style={{ fontSize: 12.5, color: "#6B6B63", marginTop: 3 }}>Données en lecture seule, calculées depuis le Suivi RH</div>
         </div>
-        <input type="date" value={moisSelectionne} onChange={e => setMoisSelectionne(e.target.value)} style={{ background: "white", border: "1px solid #E4E1D8", padding: "8px 14px", borderRadius: 8, fontSize: 12.5, fontWeight: 600, color: NAVY }} />
+        <input type="month" value={moisSelectionne} onChange={e => setMoisSelectionne(e.target.value)} style={{ background: "white", border: "1px solid #E4E1D8", padding: "8px 14px", borderRadius: 8, fontSize: 12.5, fontWeight: 600, color: NAVY }} />
       </div>
 
       <Panel title="💱 Taux DT → USD (indépendant de celui du Suivi RH — mets-le à jour ici aussi)">
@@ -567,6 +592,33 @@ function SalairesRHPage({ agentsRDC, agentsTN, pointages, monthParams, dtToUsd, 
               })}
             </tbody>
           </table>
+        )}
+      </Panel>
+
+      <Panel title={`🏛 Charges sociales RDC (${agentsRDC.length}) — À la charge de la société, jamais déduites de l'agent`}>
+        <div style={{ fontSize: 11, color: "#6B6B63", marginBottom: 10 }}>Ces montants s'ajoutent au salaire net ci-dessus — l'agent ne les paie pas et ne les voit pas sur son versement.</div>
+        {agentsRDC.length === 0 ? <EmptyState text="Aucun agent RDC dans le Suivi RH." /> : (
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+              <thead><tr><Th>Agent</Th><Th>CNSS salarié (5%)</Th><Th>IPR (15%)</Th><Th>CNSS patronal (13%)</Th><Th>INPP (3%)</Th><Th>ONEM (2%)</Th><Th>Total charges société</Th></tr></thead>
+              <tbody>
+                {agentsRDC.map(agent => {
+                  const ch = calcChargesRDC_RH(agent, monthParams, moisRH);
+                  return (
+                    <tr key={agent.id}>
+                      <Td><b>{agent.nom}</b></Td>
+                      <Td style={{ color: "#B4322B" }}>{fmt(ch.cnssSal)}</Td>
+                      <Td style={{ color: "#B4322B" }}>{fmt(ch.ipr)}</Td>
+                      <Td style={{ color: "#FD7E14" }}>{fmt(ch.cnssPat)}</Td>
+                      <Td style={{ color: "#FD7E14" }}>{fmt(ch.inpp)}</Td>
+                      <Td style={{ color: "#FD7E14" }}>{fmt(ch.onem)}</Td>
+                      <Td><b>{fmt(ch.total)}</b></Td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
         )}
       </Panel>
 
@@ -628,6 +680,61 @@ function CampagnesPage({ campagnes, addCampagne, removeCampagne, taux }) {
 // ============================================================
 // PAGE : PARAMÈTRES
 // ============================================================
+// ============================================================
+// PAGE : RÉCAPITULATIF MENSUEL — Vue d'ensemble mois par mois
+// (recettes / dépenses / salaires / charges sociales / résultat net)
+// ============================================================
+function RecapMensuelPage({ moisDisponibles, recettesUSD, depensesUSD, agentsRDC, agentsTN, pointages, monthParams, dtToUsd }) {
+  function labelMois(mk) {
+    const [y, m] = mk.split("-").map(Number);
+    return new Date(y, m - 1, 1).toLocaleDateString("fr-FR", { month: "long", year: "numeric" });
+  }
+  function calcMois(mk) {
+    const rec = recettesUSD.filter(r => monthKey(r.date) === mk).reduce((s, r) => s + r.montantUSD, 0);
+    const dep = depensesUSD.filter(d => monthKey(d.date) === mk).reduce((s, d) => s + d.montantUSD, 0);
+    const sal =
+      agentsRDC.reduce((s, a) => s + calcNetRDC_RH(a, pointages, monthParams, mk), 0) +
+      agentsTN.reduce((s, a) => s + calcNetTN_RH(a, pointages, monthParams, mk, dtToUsd).netUSD, 0);
+    const charges = agentsRDC.reduce((s, a) => s + calcChargesRDC_RH(a, monthParams, mk).total, 0);
+    const resultat = rec - dep - sal - charges;
+    return { rec, dep, sal, charges, resultat };
+  }
+
+  return (
+    <>
+      <div style={{ marginBottom: 22 }}>
+        <h1 style={{ fontSize: 22, margin: 0, fontWeight: 700, color: NAVY }}>Récapitulatif mensuel</h1>
+        <div style={{ fontSize: 12.5, color: "#6B6B63", marginTop: 3 }}>Vue d'ensemble de tous les mois — tout ce qui entre, tout ce qui sort</div>
+      </div>
+      <Panel title="Tous les mois">
+        {moisDisponibles.length === 0 ? <EmptyState text="Aucune donnée enregistrée encore." /> : (
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
+              <thead><tr><Th>Mois</Th><Th>Recettes</Th><Th>Dépenses</Th><Th>Salaires versés</Th><Th>Charges sociales</Th><Th>Résultat net</Th></tr></thead>
+              <tbody>
+                {moisDisponibles.map(mk => {
+                  const c = calcMois(mk);
+                  return (
+                    <tr key={mk}>
+                      <Td><b style={{ textTransform: "capitalize" }}>{labelMois(mk)}</b></Td>
+                      <Td style={{ color: "#1E7A4C" }}>{fmt(c.rec)}</Td>
+                      <Td style={{ color: "#B4322B" }}>{fmt(c.dep)}</Td>
+                      <Td style={{ color: "#8a6500" }}>{fmt(c.sal)}</Td>
+                      <Td style={{ color: "#FD7E14" }}>{fmt(c.charges)}</Td>
+                      <Td><b style={{ color: c.resultat >= 0 ? "#1E7A4C" : "#B4322B", fontSize: 13 }}>{fmt(c.resultat)}</b></Td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Panel>
+      <div style={{ fontSize: 11, color: "#999" }}>ℹ️ Résultat net = Recettes − Dépenses − Salaires versés − Charges sociales, pour le mois concerné.</div>
+    </>
+  );
+}
+
 function ParametresPage({ onChangePassword }) {
   const [oldPw, setOldPw] = useState(""); const [newPw, setNewPw] = useState(""); const [newPw2, setNewPw2] = useState(""); const [msg, setMsg] = useState("");
   async function submit() {
