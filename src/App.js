@@ -31,6 +31,181 @@ function convertToUSD(montant, devise, taux) {
   return montant;
 }
 
+// ============================================================
+// LOGIQUE DE CALCUL DU SALAIRE — REPRISE DU LOGICIEL SUIVI RH
+// (Lecture seule ici : Compta ne fait que LIRE les tables partagées
+// agents / pointages / month_params — jamais les modifier)
+// ============================================================
+const DT_TO_USD_DEFAULT = 0.32;
+const HEURE_DEBUT_RH = "09:00";
+const HEURE_FIN_RH = "17:00";
+const HEURES_JOUR_RH = 8;
+const TAUX_RDC_RH = { cnssSal: 0.05, ipr: 0.15, cnssPat: 0.13, inpp: 0.03, onem: 0.02 };
+
+function joursOuvrablesRH(year, month) {
+  let count = 0;
+  const date = new Date(year, month - 1, 1);
+  while (date.getMonth() === month - 1) {
+    const day = date.getDay();
+    if (day !== 0 && day !== 6) count++;
+    date.setDate(date.getDate() + 1);
+  }
+  return count;
+}
+
+function timeToMinutesRH(t) {
+  if (!t) return null;
+  const [h, m] = t.split(":").map(Number);
+  return h * 60 + m;
+}
+
+const FERIES_FRANCE_FIXES_RH = [
+  { date: "01-01", nom: "Nouvel An 🇫🇷" },
+  { date: "05-01", nom: "Fête du Travail 🇫🇷" },
+  { date: "05-08", nom: "Victoire 1945 🇫🇷" },
+  { date: "07-14", nom: "Fête Nationale 🇫🇷" },
+  { date: "08-15", nom: "Assomption 🇫🇷" },
+  { date: "11-01", nom: "Toussaint 🇫🇷" },
+  { date: "11-11", nom: "Armistice 🇫🇷" },
+  { date: "12-25", nom: "Noël 🇫🇷" },
+];
+
+function calculerPaquesEtFeriesRH(year) {
+  const a = year % 19;
+  const b = Math.floor(year / 100);
+  const c = year % 100;
+  const d = Math.floor(b / 4);
+  const e = b % 4;
+  const f = Math.floor((b + 8) / 25);
+  const g = Math.floor((b - f + 1) / 3);
+  const h = (19 * a + b - d - g + 15) % 30;
+  const i = Math.floor(c / 4);
+  const k = c % 4;
+  const l = (32 + 2 * e + 2 * i - h - k) % 7;
+  const m = Math.floor((a + 11 * h + 22 * l) / 451);
+  const month = Math.floor((h + l - 7 * m + 114) / 31);
+  const day = ((h + l - 7 * m + 114) % 31) + 1;
+  const paques = new Date(year, month - 1, day);
+  const fmtd = (d2) => {
+    const mm = String(d2.getMonth() + 1).padStart(2, "0");
+    const dd = String(d2.getDate()).padStart(2, "0");
+    return `${mm}-${dd}`;
+  };
+  const addDays = (d2, n) => new Date(d2.getFullYear(), d2.getMonth(), d2.getDate() + n);
+  return [
+    { date: fmtd(addDays(paques, 1)), nom: "Lundi de Pâques 🇫🇷" },
+    { date: fmtd(addDays(paques, 39)), nom: "Ascension 🇫🇷" },
+    { date: fmtd(addDays(paques, 50)), nom: "Lundi de Pentecôte 🇫🇷" },
+  ];
+}
+
+const FERIES_RDC_FIXES_RH = [
+  { date: "01-01", nom: "Nouvel An 🇨🇩" },
+  { date: "01-04", nom: "Martyrs de l'Indépendance 🇨🇩" },
+  { date: "01-16", nom: "Héros National L.D. Kabila 🇨🇩" },
+  { date: "01-17", nom: "Héros National P.E. Lumumba 🇨🇩" },
+  { date: "04-06", nom: "Simon Kimbangu & Conscience Africaine 🇨🇩" },
+  { date: "05-01", nom: "Fête du Travail 🇨🇩" },
+  { date: "05-17", nom: "Journée des Forces Armées 🇨🇩" },
+  { date: "06-30", nom: "Fête de l'Indépendance 🇨🇩" },
+  { date: "08-01", nom: "Fête des Parents 🇨🇩" },
+  { date: "12-25", nom: "Noël 🇨🇩" },
+];
+
+const FERIES_TN_FIXES_RH = [
+  { date: "01-01", nom: "Nouvel An 🇹🇳" },
+  { date: "01-14", nom: "Révolution et Jeunesse 🇹🇳" },
+  { date: "03-20", nom: "Fête de l'Indépendance 🇹🇳" },
+  { date: "04-09", nom: "Journée des Martyrs 🇹🇳" },
+  { date: "05-01", nom: "Fête du Travail 🇹🇳" },
+  { date: "07-25", nom: "Fête de la République 🇹🇳" },
+  { date: "08-13", nom: "Journée de la Femme 🇹🇳" },
+  { date: "10-15", nom: "Journée de l'Évacuation 🇹🇳" },
+];
+
+function getFerieInfoRH(dateISO, localisation) {
+  const year = parseInt(dateISO.slice(0, 4));
+  const mmdd = dateISO.slice(5);
+  const feriesFrance = [...FERIES_FRANCE_FIXES_RH, ...calculerPaquesEtFeriesRH(year)];
+  const matchFrance = feriesFrance.find(f => f.date === mmdd);
+  if (matchFrance) return { isFerie: true };
+  if (localisation === "RDC") {
+    const match = FERIES_RDC_FIXES_RH.find(f => f.date === mmdd);
+    if (match) return { isFerie: true };
+  }
+  if (localisation === "TN") {
+    const match = FERIES_TN_FIXES_RH.find(f => f.date === mmdd);
+    if (match) return { isFerie: true };
+  }
+  return { isFerie: false };
+}
+
+function calculDuJourRH(agent, pointagesAgent, monthParamsAgent, date) {
+  const localisation = agent ? (agent.localisation || "RDC") : "RDC";
+  const ferieInfo = getFerieInfoRH(date, localisation);
+  const p = pointagesAgent.find(pt => pt.date === date);
+  const mp = monthParamsAgent;
+  const [year, month] = date.split("-").map(Number);
+  const jOuvrables = joursOuvrablesRH(year, month);
+  const fixeJournalier = (mp.salaireFixe || 0) / jOuvrables;
+
+  if (ferieInfo.isFerie) return { montantJour: fixeJournalier };
+  if (!p || p.statut === "absent") return { montantJour: 0, estAbsentNJ: p && p.statut === "absent" && !p.justifie };
+
+  const arriveeMin = timeToMinutesRH(p.heureArrivee);
+  const departMin = timeToMinutesRH(p.heureDepart);
+  if (!arriveeMin && !departMin) return { montantJour: fixeJournalier };
+
+  let minutesTravaillees = 0;
+  if (arriveeMin && departMin) {
+    minutesTravaillees = Math.max(0, departMin - arriveeMin);
+  } else if (arriveeMin && !departMin) {
+    const debutMin = timeToMinutesRH(HEURE_DEBUT_RH);
+    const retard = Math.max(0, arriveeMin - debutMin);
+    minutesTravaillees = (HEURES_JOUR_RH * 60) - retard;
+  } else if (!arriveeMin && departMin) {
+    const finMin = timeToMinutesRH(HEURE_FIN_RH);
+    const departAnticipe = Math.max(0, finMin - departMin);
+    minutesTravaillees = (HEURES_JOUR_RH * 60) - departAnticipe;
+  }
+  const minutesManquantes = Math.max(0, (HEURES_JOUR_RH * 60) - minutesTravaillees);
+  const tauxMin = fixeJournalier / (HEURES_JOUR_RH * 60);
+  const deductionRetard = minutesManquantes * tauxMin;
+  const montantJour = Math.max(0, fixeJournalier - deductionRetard);
+  return { montantJour };
+}
+
+// Récap NET agent RDC (USD) — reprend exactement la règle du RH :
+// prime d'assiduité annulée si 2 absences non justifiées ou plus
+function calcNetRDC_RH(agent, pointages, monthParams, mk) {
+  const pts = pointages.filter(p => p.agentId === agent.id && monthKey(p.date) === mk);
+  const mp = monthParams.find(m => m.agentId === agent.id && m.mois === mk) || { salaireFixe: 0, primeAssiduite: 0, primePerformance: 0 };
+  let totalFixe = 0, absNJ = 0;
+  pts.forEach(p => {
+    const c = calculDuJourRH(agent, pts, mp, p.date);
+    totalFixe += c.montantJour;
+    if (p.statut === "absent" && !p.justifie) absNJ++;
+  });
+  const primeAss = absNJ >= 2 ? 0 : (mp.primeAssiduite || 0);
+  const primePerf = mp.primePerformance || 0;
+  return totalFixe + primeAss + primePerf;
+}
+
+// Récap NET agent Tunisie (DT + équivalent USD)
+function calcNetTN_RH(agent, pointages, monthParams, mk, dtToUsd) {
+  const pts = pointages.filter(p => p.agentId === agent.id && monthKey(p.date) === mk);
+  const mp = monthParams.find(m => m.agentId === agent.id && m.mois === mk) || { salaireFixe: 0, primeAssiduite: 0, primePerformance: 0 };
+  let totalFixe = 0;
+  pts.forEach(p => {
+    const c = calculDuJourRH(agent, pts, mp, p.date);
+    totalFixe += c.montantJour;
+  });
+  const primeAss = mp.primeAssiduite || 0;
+  const primePerf = mp.primePerformance || 0;
+  const netDT = totalFixe + primeAss + primePerf;
+  return { netDT, netUSD: netDT * dtToUsd };
+}
+
 export default function App() {
   const [unlocked, setUnlocked] = useState(false);
   const [storedPassword, setStoredPassword] = useState(null);
@@ -49,6 +224,13 @@ export default function App() {
   const [campagnes, setCampagnes] = useState([]);
   const [taux, setTaux] = useState({ eurUsd: 1.08, usdCdf: 2800 });
 
+  // Données RH en lecture seule (partagées avec le Suivi RH via Supabase)
+  const [agentsRH, setAgentsRH] = useState([]);
+  const [pointagesRH, setPointagesRH] = useState([]);
+  const [monthParamsRH, setMonthParamsRH] = useState([]);
+  const [dtToUsdRH, setDtToUsdRH] = useState(DT_TO_USD_DEFAULT);
+  const [moisSelectionne, setMoisSelectionne] = useState(todayISO());
+
   // ─── Vérifier le mot de passe au démarrage ──────────────────
   useEffect(() => {
     async function checkPassword() {
@@ -64,18 +246,24 @@ export default function App() {
   useEffect(() => {
     if (!unlocked) return;
     async function loadAll() {
-      const [r, d, s, c, t] = await Promise.all([
+      const [r, d, s, c, t, a, p, mp] = await Promise.all([
         supabase.from("recettes").select("*"),
         supabase.from("depenses").select("*"),
         supabase.from("salaires_verses").select("*"),
         supabase.from("campagnes").select("*"),
         supabase.from("taux_change").select("*").eq("id", "main").maybeSingle(),
+        supabase.from("agents").select("*").order("created_at"),
+        supabase.from("pointages").select("*"),
+        supabase.from("month_params").select("*"),
       ]);
       if (r.data) setRecettes(r.data);
       if (d.data) setDepenses(d.data);
       if (s.data) setSalaires(s.data.map(x => ({ ...x, cnssSal: x.cnss_sal, cnssPat: x.cnss_pat })));
       if (c.data) setCampagnes(c.data.map(x => ({ ...x, dateDebut: x.date_debut, dateFin: x.date_fin, resultatEstime: x.resultat_estime })));
       if (t.data) setTaux({ eurUsd: t.data.eur_usd, usdCdf: t.data.usd_cdf });
+      if (a.data) setAgentsRH(a.data);
+      if (p.data) setPointagesRH(p.data.map(x => ({ ...x, agentId: x.agent_id, heureArrivee: x.heure_arrivee, heureDepart: x.heure_depart })));
+      if (mp.data) setMonthParamsRH(mp.data.map(x => ({ ...x, agentId: x.agent_id, salaireFixe: x.salaire_fixe, primePerformance: x.prime_performance, primeAssiduite: x.prime_assiduite || 0 })));
       setLoaded(true);
     }
     loadAll();
@@ -182,6 +370,11 @@ export default function App() {
   const totalSalairesMois = salaires.filter(s => monthKey(s.date) === currentMonth).reduce((s, x) => s + (x.net || 0), 0);
   const resultatNet = totalRecettesMois - totalDepensesMois;
 
+  // Agents RH séparés par localisation (lecture seule)
+  const agentsRHRDC = agentsRH.filter(a => a.localisation === "RDC" || !a.localisation);
+  const agentsRHTN = agentsRH.filter(a => a.localisation === "TN");
+  const moisRH = monthKey(moisSelectionne);
+
   if (connError) return <div style={{ padding: 40, fontFamily: "sans-serif", color: "#B4322B" }}>⚠️ {connError}</div>;
   if (setupMode) return <SetupPasswordScreen newPw={newPw} setNewPw={setNewPw} newPw2={newPw2} setNewPw2={setNewPw2} onSubmit={handleSetupPassword} error={pwError} />;
   if (!unlocked) return <LoginScreen pwInput={pwInput} setPwInput={setPwInput} onSubmit={handleUnlock} error={pwError} />;
@@ -195,6 +388,7 @@ export default function App() {
         {page === "recettes" && <RecettesPage recettes={recettes} addRecette={addRecette} removeRecette={removeRecette} taux={taux} />}
         {page === "depenses" && <DepensesPage depenses={depenses} addDepense={addDepense} removeDepense={removeDepense} taux={taux} />}
         {page === "salaires" && <SalairesPage salaires={salaires} addSalaire={addSalaire} removeSalaire={removeSalaire} calcSalaire={calcSalaire} />}
+        {page === "salaires_rh" && <SalairesRHPage agentsRDC={agentsRHRDC} agentsTN={agentsRHTN} pointages={pointagesRH} monthParams={monthParamsRH} dtToUsd={dtToUsdRH} setDtToUsd={setDtToUsdRH} moisSelectionne={moisSelectionne} setMoisSelectionne={setMoisSelectionne} moisRH={moisRH} />}
         {page === "campagnes" && <CampagnesPage campagnes={campagnes} addCampagne={addCampagne} removeCampagne={removeCampagne} taux={taux} />}
         {page === "parametres" && <ParametresPage onChangePassword={handleChangePassword} />}
       </div>
@@ -243,7 +437,7 @@ function LoginScreen({ pwInput, setPwInput, onSubmit, error }) {
 // SIDEBAR
 // ============================================================
 function Sidebar({ page, setPage, onLock }) {
-  const items = [["dashboard", "Tableau de bord"], ["recettes", "Recettes"], ["depenses", "Dépenses"], ["salaires", "Salaires & Charges"], ["campagnes", "Campagnes Clients"], ["parametres", "Paramètres"]];
+  const items = [["dashboard", "Tableau de bord"], ["recettes", "Recettes"], ["depenses", "Dépenses"], ["salaires", "Salaires & Charges"], ["salaires_rh", "Salaires (RH)"], ["campagnes", "Campagnes Clients"], ["parametres", "Paramètres"]];
   return (
     <div style={{ width: 230, background: NAVY, color: "white", padding: "24px 0", flexShrink: 0 }}>
       <div style={{ padding: "0 24px 24px", borderBottom: "1px solid rgba(255,255,255,.1)", marginBottom: 16 }}>
@@ -278,11 +472,12 @@ function DashboardPage({ totalRecettesMois, totalDepensesMois, resultatNet, tota
         <Kpi label="Résultat net" value={fmt(resultatNet)} color={resultatNet >= 0 ? "#1E7A4C" : "#B4322B"} />
         <Kpi label="Salaires versés ce mois" value={fmt(totalSalairesMois)} color="#8a6500" />
       </div>
-      <Panel title="Taux de change actifs — Mets à jour chaque lundi">
+      <Panel title="Taux de change actifs — Mets à jour selon le taux FirstBank du jour">
         <div style={{ display: "flex", gap: 24, flexWrap: "wrap" }}>
           <div><label style={labelStyle}>1 EUR =</label><div style={{ display: "flex", alignItems: "center", gap: 6 }}><input type="number" step="0.01" value={taux.eurUsd} onChange={e => setTaux({ ...taux, eurUsd: parseFloat(e.target.value) || 0 })} style={{ ...inputStyle, width: 90 }} /><span style={{ fontSize: 12, color: "#6B6B63" }}>USD</span></div></div>
           <div><label style={labelStyle}>1 USD =</label><div style={{ display: "flex", alignItems: "center", gap: 6 }}><input type="number" value={taux.usdCdf} onChange={e => setTaux({ ...taux, usdCdf: parseFloat(e.target.value) || 0 })} style={{ ...inputStyle, width: 90 }} /><span style={{ fontSize: 12, color: "#6B6B63" }}>CDF</span></div></div>
         </div>
+        <div style={{ fontSize: 11, color: "#999", marginTop: 10 }}>💡 Ces taux servent à convertir automatiquement les recettes/dépenses/campagnes saisies en EUR ou CDF vers l'USD partout dans le logiciel.</div>
       </Panel>
       <Panel title="Dernières recettes enregistrées">
         {recentRecettes.length === 0 ? <EmptyState text="Aucune recette enregistrée encore." /> : (
@@ -364,7 +559,7 @@ function DepensesPage({ depenses, addDepense, removeDepense, taux }) {
 }
 
 // ============================================================
-// PAGE : SALAIRES & CHARGES
+// PAGE : SALAIRES & CHARGES (saisie manuelle libre — inchangée)
 // ============================================================
 function SalairesPage({ salaires, addSalaire, removeSalaire, calcSalaire }) {
   const [form, setForm] = useState({ date: todayISO(), nom: "", poste: "", brut: "" });
@@ -402,6 +597,61 @@ function SalairesPage({ salaires, addSalaire, removeSalaire, calcSalaire }) {
           </div>
         )}
       </Panel>
+    </>
+  );
+}
+
+// ============================================================
+// PAGE : SALAIRES (RH) — LECTURE SEULE, DONNÉES DU SUIVI RH
+// ============================================================
+function SalairesRHPage({ agentsRDC, agentsTN, pointages, monthParams, dtToUsd, setDtToUsd, moisSelectionne, setMoisSelectionne, moisRH }) {
+  const monthLabel = new Date(moisSelectionne).toLocaleDateString("fr-FR", { month: "long", year: "numeric" });
+  return (
+    <>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 22, flexWrap: "wrap", gap: 12 }}>
+        <div>
+          <h1 style={{ fontSize: 22, margin: 0, fontWeight: 700, color: NAVY }}>Salaires — {monthLabel}</h1>
+          <div style={{ fontSize: 12.5, color: "#6B6B63", marginTop: 3 }}>Données en lecture seule, calculées depuis le Suivi RH</div>
+        </div>
+        <input type="date" value={moisSelectionne} onChange={e => setMoisSelectionne(e.target.value)} style={{ background: "white", border: "1px solid #E4E1D8", padding: "8px 14px", borderRadius: 8, fontSize: 12.5, fontWeight: 600, color: NAVY }} />
+      </div>
+
+      <Panel title="💱 Taux DT → USD (indépendant de celui du Suivi RH — mets-le à jour ici aussi)">
+        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          <label style={labelStyle}>1 DT =</label>
+          <input type="number" step="0.001" value={dtToUsd} onChange={e => setDtToUsd(parseFloat(e.target.value) || 0)} style={{ ...inputStyle, width: 100 }} />
+          <span style={{ fontSize: 12, color: "#6B6B63" }}>USD</span>
+        </div>
+      </Panel>
+
+      <Panel title={`🇨🇩 Agents RDC (${agentsRDC.length}) — Salaire net à verser (USD)`}>
+        {agentsRDC.length === 0 ? <EmptyState text="Aucun agent RDC dans le Suivi RH." /> : (
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
+            <thead><tr><Th>Agent</Th><Th>Salaire net à verser</Th></tr></thead>
+            <tbody>
+              {agentsRDC.map(agent => {
+                const net = calcNetRDC_RH(agent, pointages, monthParams, moisRH);
+                return (<tr key={agent.id}><Td><b>{agent.nom}</b></Td><Td><b style={{ color: "#1E7A4C", fontSize: 13 }}>{fmt(net)}</b></Td></tr>);
+              })}
+            </tbody>
+          </table>
+        )}
+      </Panel>
+
+      <Panel title={`🇹🇳 Agents Tunisie (${agentsTN.length}) — Salaire net à verser (DT + équivalent USD)`}>
+        {agentsTN.length === 0 ? <EmptyState text="Aucun agent Tunisie dans le Suivi RH." /> : (
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
+            <thead><tr><Th>Agent</Th><Th>Salaire net à verser (DT)</Th><Th>Équivalent (USD)</Th></tr></thead>
+            <tbody>
+              {agentsTN.map(agent => {
+                const r = calcNetTN_RH(agent, pointages, monthParams, moisRH, dtToUsd);
+                return (<tr key={agent.id}><Td><b>{agent.nom}</b></Td><Td><b style={{ color: "#8a6500", fontSize: 13 }}>{fmt(r.netDT, "DT")}</b></Td><Td><b style={{ color: "#1E7A4C" }}>{fmt(r.netUSD)}</b></Td></tr>);
+              })}
+            </tbody>
+          </table>
+        )}
+      </Panel>
+      <div style={{ fontSize: 11, color: "#999" }}>ℹ️ Cette section reflète automatiquement ce qui est saisi dans le Suivi RH (agents, pointages, primes). Elle n'est pas modifiable ici.</div>
     </>
   );
 }
