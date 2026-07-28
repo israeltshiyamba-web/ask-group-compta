@@ -340,6 +340,11 @@ export default function App() {
     setDepenses(prev => prev.filter(d => d.id !== id));
     await supabase.from("depenses").delete().eq("id", id);
   }
+  async function updateDepense(id, form) {
+    const updated = { date: form.date, fournisseur: form.fournisseur, categorie: form.categorie, description: form.description, devise: form.devise, montant: parseFloat(form.montant) };
+    setDepenses(prev => prev.map(d => d.id === id ? { ...d, ...updated } : d));
+    await supabase.from("depenses").update(updated).eq("id", id);
+  }
 
   // ─── Campagnes ───────────────────────────────────────────────
   async function addCampagne(form) {
@@ -414,7 +419,7 @@ export default function App() {
       <div style={{ flex: 1, padding: "28px 36px", maxWidth: 1300, overflowX: "auto" }}>
         {page === "dashboard" && <DashboardPage totalRecettesMois={totalRecettesMois} totalDepensesMois={totalDepensesMois} resultatNet={resultatNet} totalSalairesMois={totalSalairesMois} totalChargesSocialesMois={totalChargesSocialesMois} taux={taux} setTaux={updateTaux} recettesUSD={recettesUSD} />}
         {page === "recettes" && <RecettesPage recettes={recettes} addRecette={addRecette} removeRecette={removeRecette} updateRecette={updateRecette} taux={taux} />}
-        {page === "depenses" && <DepensesPage depenses={depenses} addDepense={addDepense} removeDepense={removeDepense} taux={taux} />}
+        {page === "depenses" && <DepensesPage depenses={depenses} addDepense={addDepense} removeDepense={removeDepense} updateDepense={updateDepense} taux={taux} />}
         {page === "salaires_rh" && <SalairesRHPage agentsRDC={agentsRHRDC} agentsTN={agentsRHTN} pointages={pointagesRH} monthParams={monthParamsRH} dtToUsd={dtToUsdRH} setDtToUsd={setDtToUsdRH} moisSelectionne={moisSelectionne} setMoisSelectionne={setMoisSelectionne} moisRH={moisRH} />}
         {page === "campagnes" && <CampagnesPage campagnes={campagnes} addCampagne={addCampagne} removeCampagne={removeCampagne} taux={taux} />}
         {page === "recap_mensuel" && <RecapMensuelPage recapParMois={recapParMois} />}
@@ -573,15 +578,29 @@ function RecettesPage({ recettes, addRecette, removeRecette, updateRecette, taux
 // ============================================================
 // PAGE : DÉPENSES
 // ============================================================
-function DepensesPage({ depenses, addDepense, removeDepense, taux }) {
+function DepensesPage({ depenses, addDepense, removeDepense, updateDepense, taux }) {
   const categories = ["Loyer & charges locaux", "Internet & téléphonie", "Logiciels CRM & VoIP", "Matériel informatique", "Électricité & eau", "Transport", "Fournitures de bureau", "Formation", "Frais bancaires", "Taxes & impôts", "Autres"];
-  const [form, setForm] = useState({ date: todayISO(), fournisseur: "", categorie: categories[0], description: "", devise: "USD", montant: "" });
-  function submit() { if (!form.fournisseur || !form.montant) return; addDepense(form); setForm({ date: todayISO(), fournisseur: "", categorie: categories[0], description: "", devise: "USD", montant: "" }); }
+  const emptyForm = { date: todayISO(), fournisseur: "", categorie: categories[0], description: "", devise: "USD", montant: "" };
+  const [form, setForm] = useState(emptyForm);
+  const [editingId, setEditingId] = useState(null);
+
+  function submit() {
+    if (!form.fournisseur || !form.montant) return;
+    if (editingId) { updateDepense(editingId, form); setEditingId(null); }
+    else { addDepense(form); }
+    setForm(emptyForm);
+  }
+  function startEdit(d) {
+    setForm({ date: d.date, fournisseur: d.fournisseur, categorie: d.categorie, description: d.description || "", devise: d.devise, montant: String(d.montant) });
+    setEditingId(d.id);
+  }
+  function cancelEdit() { setEditingId(null); setForm(emptyForm); }
+
   const total = depenses.reduce((s, d) => s + convertToUSD(d.montant, d.devise, taux), 0);
   return (
     <>
       <div style={{ marginBottom: 22 }}><h1 style={{ fontSize: 22, margin: 0, fontWeight: 700, color: NAVY }}>Dépenses</h1><div style={{ fontSize: 12.5, color: "#6B6B63", marginTop: 3 }}>Enregistre chaque dépense de la société</div></div>
-      <Panel title="Ajouter une dépense">
+      <Panel title={editingId ? "Modifier la dépense" : "Ajouter une dépense"}>
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "flex-end" }}>
           <Field label="Date"><input type="date" value={form.date} onChange={e => setForm({ ...form, date: e.target.value })} style={inputStyle} /></Field>
           <Field label="Fournisseur"><input type="text" value={form.fournisseur} onChange={e => setForm({ ...form, fournisseur: e.target.value })} placeholder="Nom" style={{ ...inputStyle, width: 160 }} /></Field>
@@ -589,14 +608,15 @@ function DepensesPage({ depenses, addDepense, removeDepense, taux }) {
           <Field label="Description"><input type="text" value={form.description} onChange={e => setForm({ ...form, description: e.target.value })} placeholder="Détail" style={{ ...inputStyle, width: 160 }} /></Field>
           <Field label="Devise"><select value={form.devise} onChange={e => setForm({ ...form, devise: e.target.value })} style={inputStyle}><option>USD</option><option>EUR</option><option>CDF</option></select></Field>
           <Field label="Montant"><input type="number" value={form.montant} onChange={e => setForm({ ...form, montant: e.target.value })} placeholder="0.00" style={{ ...inputStyle, width: 100 }} /></Field>
-          <button onClick={submit} style={{ background: GOLD, color: NAVY, border: "none", padding: "9px 18px", borderRadius: 8, fontWeight: 700, cursor: "pointer", fontSize: 12 }}>+ Ajouter</button>
+          <button onClick={submit} style={{ background: GOLD, color: NAVY, border: "none", padding: "9px 18px", borderRadius: 8, fontWeight: 700, cursor: "pointer", fontSize: 12 }}>{editingId ? "Enregistrer" : "+ Ajouter"}</button>
+          {editingId && <button onClick={cancelEdit} style={{ background: "#F0F0EE", color: "#6B6B63", border: "none", padding: "9px 18px", borderRadius: 8, fontWeight: 700, cursor: "pointer", fontSize: 12 }}>Annuler</button>}
         </div>
       </Panel>
       <Panel title={`Toutes les dépenses — Total : ${fmt(total)}`}>
         {depenses.length === 0 ? <EmptyState text="Aucune dépense enregistrée." /> : (
           <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
             <thead><tr><Th>Date</Th><Th>Fournisseur</Th><Th>Catégorie</Th><Th>Description</Th><Th>Montant</Th><Th>USD</Th><Th></Th></tr></thead>
-            <tbody>{[...depenses].sort((a, b) => b.date.localeCompare(a.date)).map(d => (<tr key={d.id}><Td>{new Date(d.date).toLocaleDateString("fr-FR")}</Td><Td><b>{d.fournisseur}</b></Td><Td>{d.categorie}</Td><Td>{d.description}</Td><Td>{d.montant} {d.devise}</Td><Td><b style={{ color: "#B4322B" }}>{fmt(convertToUSD(d.montant, d.devise, taux))}</b></Td><Td><button onClick={() => removeDepense(d.id)} style={delBtnStyle}>Suppr.</button></Td></tr>))}</tbody>
+            <tbody>{[...depenses].sort((a, b) => b.date.localeCompare(a.date)).map(d => (<tr key={d.id}><Td>{new Date(d.date).toLocaleDateString("fr-FR")}</Td><Td><b>{d.fournisseur}</b></Td><Td>{d.categorie}</Td><Td>{d.description}</Td><Td>{d.montant} {d.devise}</Td><Td><b style={{ color: "#B4322B" }}>{fmt(convertToUSD(d.montant, d.devise, taux))}</b></Td><Td><div style={{ display: "flex", gap: 6 }}><button onClick={() => startEdit(d)} style={editBtnStyle}>Modifier</button><button onClick={() => removeDepense(d.id)} style={delBtnStyle}>Suppr.</button></div></Td></tr>))}</tbody>
           </table>
         )}
       </Panel>
