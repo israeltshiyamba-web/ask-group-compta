@@ -207,8 +207,14 @@ function calcNetTN_RH(agent, pointages, monthParams, mk, dtToUsd) {
 
 // Charges sociales RDC — à la charge de l'entreprise, jamais déduites de l'agent
 // (calculées sur le salaire fixe mensuel, identique à la logique du Suivi RH)
+// Les contrats officiels prenant effet en août 2026, aucune charge sociale
+// n'est due pour mai, juin et juillet 2026.
 const TAUX_RDC_RH = { cnssSal: 0.05, ipr: 0.15, cnssPat: 0.13, inpp: 0.03, onem: 0.02 };
+const DEBUT_CHARGES_SOCIALES_RH = "2026-08";
 function calcChargesRDC_RH(agent, monthParams, mk) {
+  if (mk < DEBUT_CHARGES_SOCIALES_RH) {
+    return { cnssSal: 0, ipr: 0, cnssPat: 0, inpp: 0, onem: 0, total: 0 };
+  }
   const mp = monthParams.find(m => m.agentId === agent.id && m.mois === mk) || { salaireFixe: 0 };
   const brut = mp.salaireFixe || 0;
   const cnssSal = brut * TAUX_RDC_RH.cnssSal;
@@ -596,7 +602,7 @@ function SalairesRHPage({ agentsRDC, agentsTN, pointages, monthParams, dtToUsd, 
       </Panel>
 
       <Panel title={`🏛 Charges sociales RDC (${agentsRDC.length}) — À la charge de la société, jamais déduites de l'agent`}>
-        <div style={{ fontSize: 11, color: "#6B6B63", marginBottom: 10 }}>Ces montants s'ajoutent au salaire net ci-dessus — l'agent ne les paie pas et ne les voit pas sur son versement.</div>
+        <div style={{ fontSize: 11, color: "#6B6B63", marginBottom: 10 }}>Ces montants s'ajoutent au salaire net ci-dessus — l'agent ne les paie pas et ne les voit pas sur son versement. Aucune charge sociale n'est due pour mai, juin et juillet 2026 (contrats officiels à partir d'août 2026).</div>
         {agentsRDC.length === 0 ? <EmptyState text="Aucun agent RDC dans le Suivi RH." /> : (
           <div style={{ overflowX: "auto" }}>
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
