@@ -219,7 +219,6 @@ export default function App() {
   const [loaded, setLoaded] = useState(false);
   const [recettes, setRecettes] = useState([]);
   const [depenses, setDepenses] = useState([]);
-  const [salaires, setSalaires] = useState([]);
   const [campagnes, setCampagnes] = useState([]);
   const [taux, setTaux] = useState({ eurUsd: 1.08, usdCdf: 2800 });
 
@@ -245,10 +244,9 @@ export default function App() {
   useEffect(() => {
     if (!unlocked) return;
     async function loadAll() {
-      const [r, d, s, c, t, a, p, mp] = await Promise.all([
+      const [r, d, c, t, a, p, mp] = await Promise.all([
         supabase.from("recettes").select("*"),
         supabase.from("depenses").select("*"),
-        supabase.from("salaires_verses").select("*"),
         supabase.from("campagnes").select("*"),
         supabase.from("taux_change").select("*").eq("id", "main").maybeSingle(),
         supabase.from("agents").select("*").order("created_at"),
@@ -257,7 +255,6 @@ export default function App() {
       ]);
       if (r.data) setRecettes(r.data);
       if (d.data) setDepenses(d.data);
-      if (s.data) setSalaires(s.data.map(x => ({ ...x, cnssSal: x.cnss_sal, cnssPat: x.cnss_pat })));
       if (c.data) setCampagnes(c.data.map(x => ({ ...x, dateDebut: x.date_debut, dateFin: x.date_fin, resultatEstime: x.resultat_estime })));
       if (t.data) setTaux({ eurUsd: t.data.eur_usd, usdCdf: t.data.usd_cdf });
       if (a.data) setAgentsRH(a.data);
@@ -319,32 +316,6 @@ export default function App() {
     await supabase.from("depenses").delete().eq("id", id);
   }
 
-  // ─── Salaires ────────────────────────────────────────────────
-  const TAUX_CHARGES = { cnssSal: 0.05, ipr: 0.15, cnssPat: 0.13, inpp: 0.03, onem: 0.02 };
-  function calcSalaire(brut) {
-    const cnssSal = brut * TAUX_CHARGES.cnssSal;
-    const ipr = Math.max(0, (brut - cnssSal) * TAUX_CHARGES.ipr);
-    const net = brut - cnssSal - ipr;
-    const cnssPat = brut * TAUX_CHARGES.cnssPat;
-    const inpp = brut * TAUX_CHARGES.inpp;
-    const onem = brut * TAUX_CHARGES.onem;
-    return { cnssSal, ipr, net, cnssPat, inpp, onem, coutTotal: brut + cnssPat + inpp + onem };
-  }
-  async function addSalaire(form) {
-    const brut = parseFloat(form.brut);
-    const c = calcSalaire(brut);
-    const newRow = { id: uid(), date: form.date, nom: form.nom, poste: form.poste, brut, ...c };
-    setSalaires(prev => [...prev, newRow]);
-    await supabase.from("salaires_verses").insert({
-      id: newRow.id, date: newRow.date, nom: newRow.nom, poste: newRow.poste, brut: newRow.brut,
-      cnss_sal: newRow.cnssSal, ipr: newRow.ipr, net: newRow.net, cnss_pat: newRow.cnssPat, inpp: newRow.inpp, onem: newRow.onem, cout_total: newRow.coutTotal,
-    });
-  }
-  async function removeSalaire(id) {
-    setSalaires(prev => prev.filter(s => s.id !== id));
-    await supabase.from("salaires_verses").delete().eq("id", id);
-  }
-
   // ─── Campagnes ───────────────────────────────────────────────
   async function addCampagne(form) {
     const newRow = { id: uid(), client: form.client, pays: form.pays, secteur: form.secteur, dateDebut: form.dateDebut, dateFin: form.dateFin, statut: form.statut, montant: parseFloat(form.montant) || 0, devise: form.devise, resultatEstime: parseFloat(form.resultatEstime) || 0 };
@@ -366,13 +337,18 @@ export default function App() {
   const depensesUSD = useMemo(() => depenses.map(d => ({ ...d, montantUSD: convertToUSD(d.montant, d.devise, taux) })), [depenses, taux]);
   const totalRecettesMois = recettesUSD.filter(r => monthKey(r.date) === currentMonth).reduce((s, r) => s + r.montantUSD, 0);
   const totalDepensesMois = depensesUSD.filter(d => monthKey(d.date) === currentMonth).reduce((s, d) => s + d.montantUSD, 0);
-  const totalSalairesMois = salaires.filter(s => monthKey(s.date) === currentMonth).reduce((s, x) => s + (x.net || 0), 0);
   const resultatNet = totalRecettesMois - totalDepensesMois;
 
   // Agents RH séparés par localisation (lecture seule)
   const agentsRHRDC = agentsRH.filter(a => a.localisation === "RDC" || !a.localisation);
   const agentsRHTN = agentsRH.filter(a => a.localisation === "TN");
   const moisRH = monthKey(moisSelectionne);
+
+  // Total des salaires versés ce mois = directement calculé depuis le Suivi RH
+  // (charges sociales à la charge de l'entreprise, jamais déduites de l'agent)
+  const totalSalairesMois =
+    agentsRHRDC.reduce((s, agent) => s + calcNetRDC_RH(agent, pointagesRH, monthParamsRH, currentMonth), 0) +
+    agentsRHTN.reduce((s, agent) => s + calcNetTN_RH(agent, pointagesRH, monthParamsRH, currentMonth, dtToUsdRH).netUSD, 0);
 
   if (connError) return <div style={{ padding: 40, fontFamily: "sans-serif", color: "#B4322B" }}>⚠️ {connError}</div>;
   if (setupMode) return <SetupPasswordScreen newPw={newPw} setNewPw={setNewPw} newPw2={newPw2} setNewPw2={setNewPw2} onSubmit={handleSetupPassword} error={pwError} />;
@@ -386,7 +362,6 @@ export default function App() {
         {page === "dashboard" && <DashboardPage totalRecettesMois={totalRecettesMois} totalDepensesMois={totalDepensesMois} resultatNet={resultatNet} totalSalairesMois={totalSalairesMois} taux={taux} setTaux={updateTaux} recettesUSD={recettesUSD} />}
         {page === "recettes" && <RecettesPage recettes={recettes} addRecette={addRecette} removeRecette={removeRecette} taux={taux} />}
         {page === "depenses" && <DepensesPage depenses={depenses} addDepense={addDepense} removeDepense={removeDepense} taux={taux} />}
-        {page === "salaires" && <SalairesPage salaires={salaires} addSalaire={addSalaire} removeSalaire={removeSalaire} calcSalaire={calcSalaire} />}
         {page === "salaires_rh" && <SalairesRHPage agentsRDC={agentsRHRDC} agentsTN={agentsRHTN} pointages={pointagesRH} monthParams={monthParamsRH} dtToUsd={dtToUsdRH} setDtToUsd={setDtToUsdRH} moisSelectionne={moisSelectionne} setMoisSelectionne={setMoisSelectionne} moisRH={moisRH} />}
         {page === "campagnes" && <CampagnesPage campagnes={campagnes} addCampagne={addCampagne} removeCampagne={removeCampagne} taux={taux} />}
         {page === "parametres" && <ParametresPage onChangePassword={handleChangePassword} />}
@@ -436,7 +411,7 @@ function LoginScreen({ pwInput, setPwInput, onSubmit, error }) {
 // SIDEBAR
 // ============================================================
 function Sidebar({ page, setPage, onLock }) {
-  const items = [["dashboard", "Tableau de bord"], ["recettes", "Recettes"], ["depenses", "Dépenses"], ["salaires", "Salaires & Charges"], ["salaires_rh", "Salaires (RH)"], ["campagnes", "Campagnes Clients"], ["parametres", "Paramètres"]];
+  const items = [["dashboard", "Tableau de bord"], ["recettes", "Recettes"], ["depenses", "Dépenses"], ["salaires_rh", "Salaires"], ["campagnes", "Campagnes Clients"], ["parametres", "Paramètres"]];
   return (
     <div style={{ width: 230, background: NAVY, color: "white", padding: "24px 0", flexShrink: 0 }}>
       <div style={{ padding: "0 24px 24px", borderBottom: "1px solid rgba(255,255,255,.1)", marginBottom: 16 }}>
@@ -558,50 +533,8 @@ function DepensesPage({ depenses, addDepense, removeDepense, taux }) {
 }
 
 // ============================================================
-// PAGE : SALAIRES & CHARGES (saisie manuelle libre — inchangée)
-// ============================================================
-function SalairesPage({ salaires, addSalaire, removeSalaire, calcSalaire }) {
-  const [form, setForm] = useState({ date: todayISO(), nom: "", poste: "", brut: "" });
-  function submit() { if (!form.nom || !form.brut) return; addSalaire(form); setForm({ date: todayISO(), nom: "", poste: "", brut: "" }); }
-  const totalCout = salaires.reduce((s, x) => s + x.coutTotal, 0);
-  const preview = form.brut ? calcSalaire(parseFloat(form.brut) || 0) : null;
-  return (
-    <>
-      <div style={{ marginBottom: 22 }}><h1 style={{ fontSize: 22, margin: 0, fontWeight: 700, color: NAVY }}>Salaires & Charges</h1><div style={{ fontSize: 12.5, color: "#6B6B63", marginTop: 3 }}>Saisis le brut — charges sociales RDC calculées automatiquement</div></div>
-      <Panel title="Ajouter un versement de salaire">
-        <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "flex-end", marginBottom: preview ? 14 : 0 }}>
-          <Field label="Date"><input type="date" value={form.date} onChange={e => setForm({ ...form, date: e.target.value })} style={inputStyle} /></Field>
-          <Field label="Nom"><input type="text" value={form.nom} onChange={e => setForm({ ...form, nom: e.target.value })} placeholder="Nom employé" style={{ ...inputStyle, width: 160 }} /></Field>
-          <Field label="Poste"><input type="text" value={form.poste} onChange={e => setForm({ ...form, poste: e.target.value })} placeholder="Ex: Agent..." style={{ ...inputStyle, width: 160 }} /></Field>
-          <Field label="Salaire BRUT (USD)"><input type="number" value={form.brut} onChange={e => setForm({ ...form, brut: e.target.value })} placeholder="0.00" style={{ ...inputStyle, width: 120 }} /></Field>
-          <button onClick={submit} style={{ background: GOLD, color: NAVY, border: "none", padding: "9px 18px", borderRadius: 8, fontWeight: 700, cursor: "pointer", fontSize: 12 }}>+ Ajouter</button>
-        </div>
-        {preview && (
-          <div style={{ background: "#F6F5F1", borderRadius: 8, padding: 12, fontSize: 12, display: "flex", gap: 18, flexWrap: "wrap" }}>
-            <span>CNSS sal. (5%) : <b style={{ color: "#B4322B" }}>{fmt(preview.cnssSal)}</b></span>
-            <span>IPR (15%) : <b style={{ color: "#B4322B" }}>{fmt(preview.ipr)}</b></span>
-            <span>NET versé : <b style={{ color: "#1E7A4C" }}>{fmt(preview.net)}</b></span>
-            <span>Charges patronales : <b style={{ color: "#8a6500" }}>{fmt(preview.cnssPat + preview.inpp + preview.onem)}</b></span>
-            <span>Coût total employeur : <b style={{ color: NAVY }}>{fmt(preview.coutTotal)}</b></span>
-          </div>
-        )}
-      </Panel>
-      <Panel title={`Historique des salaires — Coût total cumulé : ${fmt(totalCout)}`}>
-        {salaires.length === 0 ? <EmptyState text="Aucun salaire enregistré." /> : (
-          <div style={{ overflowX: "auto" }}>
-            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
-              <thead><tr><Th>Date</Th><Th>Nom</Th><Th>Poste</Th><Th>Brut</Th><Th>CNSS sal.</Th><Th>IPR</Th><Th>NET versé</Th><Th>Charges pat.</Th><Th>Coût total</Th><Th></Th></tr></thead>
-              <tbody>{[...salaires].sort((a, b) => b.date.localeCompare(a.date)).map(s => (<tr key={s.id}><Td>{new Date(s.date).toLocaleDateString("fr-FR")}</Td><Td><b>{s.nom}</b></Td><Td>{s.poste}</Td><Td>{fmt(s.brut)}</Td><Td style={{ color: "#B4322B" }}>{fmt(s.cnssSal)}</Td><Td style={{ color: "#B4322B" }}>{fmt(s.ipr)}</Td><Td><b style={{ color: "#1E7A4C" }}>{fmt(s.net)}</b></Td><Td style={{ color: "#8a6500" }}>{fmt(s.cnssPat + s.inpp + s.onem)}</Td><Td><b>{fmt(s.coutTotal)}</b></Td><Td><button onClick={() => removeSalaire(s.id)} style={delBtnStyle}>Suppr.</button></Td></tr>))}</tbody>
-            </table>
-          </div>
-        )}
-      </Panel>
-    </>
-  );
-}
-
-// ============================================================
-// PAGE : SALAIRES (RH) — LECTURE SEULE, DONNÉES DU SUIVI RH
+// PAGE : SALAIRES — LECTURE SEULE, DONNÉES DU SUIVI RH
+// (charges sociales assumées par l'entreprise, jamais déduites de l'agent)
 // ============================================================
 function SalairesRHPage({ agentsRDC, agentsTN, pointages, monthParams, dtToUsd, setDtToUsd, moisSelectionne, setMoisSelectionne, moisRH }) {
   const monthLabel = new Date(moisSelectionne).toLocaleDateString("fr-FR", { month: "long", year: "numeric" });
