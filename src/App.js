@@ -357,7 +357,6 @@ export default function App() {
   const depensesUSD = useMemo(() => depenses.map(d => ({ ...d, montantUSD: convertToUSD(d.montant, d.devise, taux) })), [depenses, taux]);
   const totalRecettesMois = recettesUSD.filter(r => monthKey(r.date) === currentMonth).reduce((s, r) => s + r.montantUSD, 0);
   const totalDepensesMois = depensesUSD.filter(d => monthKey(d.date) === currentMonth).reduce((s, d) => s + d.montantUSD, 0);
-  const resultatNet = totalRecettesMois - totalDepensesMois;
 
   // Agents RH séparés par localisation (lecture seule)
   const agentsRHRDC = agentsRH.filter(a => a.localisation === "RDC" || !a.localisation);
@@ -379,6 +378,12 @@ export default function App() {
     agentsRHRDC.reduce((s, agent) => s + calcNetRDC_RH(agent, pointagesRH, monthParamsRH, currentMonth), 0) +
     agentsRHTN.reduce((s, agent) => s + calcNetTN_RH(agent, pointagesRH, monthParamsRH, currentMonth, dtToUsdRH).netUSD, 0);
 
+  // Total des charges sociales RDC du mois (0 pour mai/juin/juillet 2026, cf. calcChargesRDC_RH)
+  const totalChargesSocialesMois = agentsRHRDC.reduce((s, agent) => s + calcChargesRDC_RH(agent, monthParamsRH, currentMonth).total, 0);
+
+  // Résultat net = tout ce qui entre moins tout ce qui sort (recettes, dépenses, salaires, charges sociales)
+  const resultatNet = totalRecettesMois - totalDepensesMois - totalSalairesMois - totalChargesSocialesMois;
+
   if (connError) return <div style={{ padding: 40, fontFamily: "sans-serif", color: "#B4322B" }}>⚠️ {connError}</div>;
   if (setupMode) return <SetupPasswordScreen newPw={newPw} setNewPw={setNewPw} newPw2={newPw2} setNewPw2={setNewPw2} onSubmit={handleSetupPassword} error={pwError} />;
   if (!unlocked) return <LoginScreen pwInput={pwInput} setPwInput={setPwInput} onSubmit={handleUnlock} error={pwError} />;
@@ -388,7 +393,7 @@ export default function App() {
     <div style={{ display: "flex", minHeight: "100vh", fontFamily: "'Segoe UI', Helvetica, Arial, sans-serif", background: "#F6F5F1", color: "#1C1C1A" }}>
       <Sidebar page={page} setPage={setPage} onLock={() => setUnlocked(false)} />
       <div style={{ flex: 1, padding: "28px 36px", maxWidth: 1300, overflowX: "auto" }}>
-        {page === "dashboard" && <DashboardPage totalRecettesMois={totalRecettesMois} totalDepensesMois={totalDepensesMois} resultatNet={resultatNet} totalSalairesMois={totalSalairesMois} taux={taux} setTaux={updateTaux} recettesUSD={recettesUSD} />}
+        {page === "dashboard" && <DashboardPage totalRecettesMois={totalRecettesMois} totalDepensesMois={totalDepensesMois} resultatNet={resultatNet} totalSalairesMois={totalSalairesMois} totalChargesSocialesMois={totalChargesSocialesMois} taux={taux} setTaux={updateTaux} recettesUSD={recettesUSD} />}
         {page === "recettes" && <RecettesPage recettes={recettes} addRecette={addRecette} removeRecette={removeRecette} taux={taux} />}
         {page === "depenses" && <DepensesPage depenses={depenses} addDepense={addDepense} removeDepense={removeDepense} taux={taux} />}
         {page === "salaires_rh" && <SalairesRHPage agentsRDC={agentsRHRDC} agentsTN={agentsRHTN} pointages={pointagesRH} monthParams={monthParamsRH} dtToUsd={dtToUsdRH} setDtToUsd={setDtToUsdRH} moisSelectionne={moisSelectionne} setMoisSelectionne={setMoisSelectionne} moisRH={moisRH} />}
@@ -462,7 +467,7 @@ function Sidebar({ page, setPage, onLock }) {
 // ============================================================
 // PAGE : TABLEAU DE BORD
 // ============================================================
-function DashboardPage({ totalRecettesMois, totalDepensesMois, resultatNet, totalSalairesMois, taux, setTaux, recettesUSD }) {
+function DashboardPage({ totalRecettesMois, totalDepensesMois, resultatNet, totalSalairesMois, totalChargesSocialesMois, taux, setTaux, recettesUSD }) {
   const recentRecettes = [...recettesUSD].sort((a, b) => b.date.localeCompare(a.date)).slice(0, 5);
   return (
     <>
@@ -470,12 +475,14 @@ function DashboardPage({ totalRecettesMois, totalDepensesMois, resultatNet, tota
         <h1 style={{ fontSize: 22, margin: 0, fontWeight: 700, color: NAVY }}>Tableau de bord financier</h1>
         <div style={{ fontSize: 12.5, color: "#6B6B63", marginTop: 3 }}>ASK GROUP SARL · Devise de référence : USD</div>
       </div>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 14, marginBottom: 22 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 14, marginBottom: 22 }}>
         <Kpi label="Recettes du mois" value={fmt(totalRecettesMois)} color="#1E7A4C" />
         <Kpi label="Dépenses du mois" value={fmt(totalDepensesMois)} color="#B4322B" />
-        <Kpi label="Résultat net" value={fmt(resultatNet)} color={resultatNet >= 0 ? "#1E7A4C" : "#B4322B"} />
         <Kpi label="Salaires versés ce mois" value={fmt(totalSalairesMois)} color="#8a6500" />
+        <Kpi label="Charges sociales du mois" value={fmt(totalChargesSocialesMois)} color="#FD7E14" />
+        <Kpi label="Résultat net" value={fmt(resultatNet)} color={resultatNet >= 0 ? "#1E7A4C" : "#B4322B"} />
       </div>
+      <div style={{ fontSize: 11, color: "#999", marginTop: -12, marginBottom: 18 }}>ℹ️ Résultat net = Recettes − Dépenses − Salaires versés − Charges sociales, pour le mois en cours.</div>
       <Panel title="Taux de change actifs — Mets à jour selon le taux FirstBank du jour">
         <div style={{ display: "flex", gap: 24, flexWrap: "wrap" }}>
           <div><label style={labelStyle}>1 EUR =</label><div style={{ display: "flex", alignItems: "center", gap: 6 }}><input type="number" step="0.01" value={taux.eurUsd} onChange={e => setTaux({ ...taux, eurUsd: parseFloat(e.target.value) || 0 })} style={{ ...inputStyle, width: 90 }} /><span style={{ fontSize: 12, color: "#6B6B63" }}>USD</span></div></div>
