@@ -324,6 +324,11 @@ export default function App() {
     setRecettes(prev => prev.filter(r => r.id !== id));
     await supabase.from("recettes").delete().eq("id", id);
   }
+  async function updateRecette(id, form) {
+    const updated = { date: form.date, client: form.client, description: form.description, devise: form.devise, montant: parseFloat(form.montant), statut: form.statut };
+    setRecettes(prev => prev.map(r => r.id === id ? { ...r, ...updated } : r));
+    await supabase.from("recettes").update(updated).eq("id", id);
+  }
 
   // ─── Dépenses ────────────────────────────────────────────────
   async function addDepense(form) {
@@ -384,6 +389,20 @@ export default function App() {
   // Résultat net = tout ce qui entre moins tout ce qui sort (recettes, dépenses, salaires, charges sociales)
   const resultatNet = totalRecettesMois - totalDepensesMois - totalSalairesMois - totalChargesSocialesMois;
 
+  // Détail mois par mois (partagé entre "Récapitulatif mensuel" et "Trésorerie")
+  const recapParMois = useMemo(() => {
+    return moisDisponibles.map(mk => {
+      const rec = recettesUSD.filter(r => monthKey(r.date) === mk).reduce((s, r) => s + r.montantUSD, 0);
+      const dep = depensesUSD.filter(d => monthKey(d.date) === mk).reduce((s, d) => s + d.montantUSD, 0);
+      const sal =
+        agentsRHRDC.reduce((s, a) => s + calcNetRDC_RH(a, pointagesRH, monthParamsRH, mk), 0) +
+        agentsRHTN.reduce((s, a) => s + calcNetTN_RH(a, pointagesRH, monthParamsRH, mk, dtToUsdRH).netUSD, 0);
+      const charges = agentsRHRDC.reduce((s, a) => s + calcChargesRDC_RH(a, monthParamsRH, mk).total, 0);
+      const resultat = rec - dep - sal - charges;
+      return { mk, rec, dep, sal, charges, resultat };
+    });
+  }, [moisDisponibles, recettesUSD, depensesUSD, agentsRHRDC, agentsRHTN, pointagesRH, monthParamsRH, dtToUsdRH]);
+
   if (connError) return <div style={{ padding: 40, fontFamily: "sans-serif", color: "#B4322B" }}>⚠️ {connError}</div>;
   if (setupMode) return <SetupPasswordScreen newPw={newPw} setNewPw={setNewPw} newPw2={newPw2} setNewPw2={setNewPw2} onSubmit={handleSetupPassword} error={pwError} />;
   if (!unlocked) return <LoginScreen pwInput={pwInput} setPwInput={setPwInput} onSubmit={handleUnlock} error={pwError} />;
@@ -394,11 +413,12 @@ export default function App() {
       <Sidebar page={page} setPage={setPage} onLock={() => setUnlocked(false)} />
       <div style={{ flex: 1, padding: "28px 36px", maxWidth: 1300, overflowX: "auto" }}>
         {page === "dashboard" && <DashboardPage totalRecettesMois={totalRecettesMois} totalDepensesMois={totalDepensesMois} resultatNet={resultatNet} totalSalairesMois={totalSalairesMois} totalChargesSocialesMois={totalChargesSocialesMois} taux={taux} setTaux={updateTaux} recettesUSD={recettesUSD} />}
-        {page === "recettes" && <RecettesPage recettes={recettes} addRecette={addRecette} removeRecette={removeRecette} taux={taux} />}
+        {page === "recettes" && <RecettesPage recettes={recettes} addRecette={addRecette} removeRecette={removeRecette} updateRecette={updateRecette} taux={taux} />}
         {page === "depenses" && <DepensesPage depenses={depenses} addDepense={addDepense} removeDepense={removeDepense} taux={taux} />}
         {page === "salaires_rh" && <SalairesRHPage agentsRDC={agentsRHRDC} agentsTN={agentsRHTN} pointages={pointagesRH} monthParams={monthParamsRH} dtToUsd={dtToUsdRH} setDtToUsd={setDtToUsdRH} moisSelectionne={moisSelectionne} setMoisSelectionne={setMoisSelectionne} moisRH={moisRH} />}
         {page === "campagnes" && <CampagnesPage campagnes={campagnes} addCampagne={addCampagne} removeCampagne={removeCampagne} taux={taux} />}
-        {page === "recap_mensuel" && <RecapMensuelPage moisDisponibles={moisDisponibles} recettesUSD={recettesUSD} depensesUSD={depensesUSD} agentsRDC={agentsRHRDC} agentsTN={agentsRHTN} pointages={pointagesRH} monthParams={monthParamsRH} dtToUsd={dtToUsdRH} />}
+        {page === "recap_mensuel" && <RecapMensuelPage recapParMois={recapParMois} />}
+        {page === "tresorerie" && <TresoreriePage recapParMois={recapParMois} />}
         {page === "parametres" && <ParametresPage onChangePassword={handleChangePassword} />}
       </div>
     </div>
@@ -446,7 +466,7 @@ function LoginScreen({ pwInput, setPwInput, onSubmit, error }) {
 // SIDEBAR
 // ============================================================
 function Sidebar({ page, setPage, onLock }) {
-  const items = [["dashboard", "Tableau de bord"], ["recettes", "Recettes"], ["depenses", "Dépenses"], ["salaires_rh", "Salaires"], ["campagnes", "Campagnes Clients"], ["recap_mensuel", "Récapitulatif mensuel"], ["parametres", "Paramètres"]];
+  const items = [["dashboard", "Tableau de bord"], ["recettes", "Recettes"], ["depenses", "Dépenses"], ["salaires_rh", "Salaires"], ["campagnes", "Campagnes Clients"], ["recap_mensuel", "Récapitulatif mensuel"], ["tresorerie", "Trésorerie"], ["parametres", "Paramètres"]];
   return (
     <div style={{ width: 230, background: NAVY, color: "white", padding: "24px 0", flexShrink: 0 }}>
       <div style={{ padding: "0 24px 24px", borderBottom: "1px solid rgba(255,255,255,.1)", marginBottom: 16 }}>
@@ -505,14 +525,28 @@ function DashboardPage({ totalRecettesMois, totalDepensesMois, resultatNet, tota
 // ============================================================
 // PAGE : RECETTES
 // ============================================================
-function RecettesPage({ recettes, addRecette, removeRecette, taux }) {
-  const [form, setForm] = useState({ date: todayISO(), client: "", description: "", devise: "USD", montant: "", statut: "Reçu" });
-  function submit() { if (!form.client || !form.montant) return; addRecette(form); setForm({ date: todayISO(), client: "", description: "", devise: "USD", montant: "", statut: "Reçu" }); }
+function RecettesPage({ recettes, addRecette, removeRecette, updateRecette, taux }) {
+  const emptyForm = { date: todayISO(), client: "", description: "", devise: "USD", montant: "", statut: "Reçu" };
+  const [form, setForm] = useState(emptyForm);
+  const [editingId, setEditingId] = useState(null);
+
+  function submit() {
+    if (!form.client || !form.montant) return;
+    if (editingId) { updateRecette(editingId, form); setEditingId(null); }
+    else { addRecette(form); }
+    setForm(emptyForm);
+  }
+  function startEdit(r) {
+    setForm({ date: r.date, client: r.client, description: r.description || "", devise: r.devise, montant: String(r.montant), statut: r.statut });
+    setEditingId(r.id);
+  }
+  function cancelEdit() { setEditingId(null); setForm(emptyForm); }
+
   const total = recettes.reduce((s, r) => s + convertToUSD(r.montant, r.devise, taux), 0);
   return (
     <>
       <div style={{ marginBottom: 22 }}><h1 style={{ fontSize: 22, margin: 0, fontWeight: 700, color: NAVY }}>Recettes</h1><div style={{ fontSize: 12.5, color: "#6B6B63", marginTop: 3 }}>Enregistre chaque paiement reçu</div></div>
-      <Panel title="Ajouter une recette">
+      <Panel title={editingId ? "Modifier la recette" : "Ajouter une recette"}>
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "flex-end" }}>
           <Field label="Date"><input type="date" value={form.date} onChange={e => setForm({ ...form, date: e.target.value })} style={inputStyle} /></Field>
           <Field label="Client"><input type="text" value={form.client} onChange={e => setForm({ ...form, client: e.target.value })} placeholder="Nom du client" style={{ ...inputStyle, width: 160 }} /></Field>
@@ -520,14 +554,15 @@ function RecettesPage({ recettes, addRecette, removeRecette, taux }) {
           <Field label="Devise"><select value={form.devise} onChange={e => setForm({ ...form, devise: e.target.value })} style={inputStyle}><option>USD</option><option>EUR</option><option>CDF</option></select></Field>
           <Field label="Montant"><input type="number" value={form.montant} onChange={e => setForm({ ...form, montant: e.target.value })} placeholder="0.00" style={{ ...inputStyle, width: 100 }} /></Field>
           <Field label="Statut"><select value={form.statut} onChange={e => setForm({ ...form, statut: e.target.value })} style={inputStyle}><option>Reçu</option><option>En attente</option><option>Partiel</option><option>Annulé</option></select></Field>
-          <button onClick={submit} style={{ background: GOLD, color: NAVY, border: "none", padding: "9px 18px", borderRadius: 8, fontWeight: 700, cursor: "pointer", fontSize: 12 }}>+ Ajouter</button>
+          <button onClick={submit} style={{ background: GOLD, color: NAVY, border: "none", padding: "9px 18px", borderRadius: 8, fontWeight: 700, cursor: "pointer", fontSize: 12 }}>{editingId ? "Enregistrer" : "+ Ajouter"}</button>
+          {editingId && <button onClick={cancelEdit} style={{ background: "#F0F0EE", color: "#6B6B63", border: "none", padding: "9px 18px", borderRadius: 8, fontWeight: 700, cursor: "pointer", fontSize: 12 }}>Annuler</button>}
         </div>
       </Panel>
       <Panel title={`Toutes les recettes — Total : ${fmt(total)}`}>
         {recettes.length === 0 ? <EmptyState text="Aucune recette enregistrée." /> : (
           <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
             <thead><tr><Th>Date</Th><Th>Client</Th><Th>Description</Th><Th>Devise</Th><Th>Montant</Th><Th>USD</Th><Th>Statut</Th><Th></Th></tr></thead>
-            <tbody>{[...recettes].sort((a, b) => b.date.localeCompare(a.date)).map(r => (<tr key={r.id}><Td>{new Date(r.date).toLocaleDateString("fr-FR")}</Td><Td><b>{r.client}</b></Td><Td>{r.description}</Td><Td>{r.devise}</Td><Td>{r.montant}</Td><Td><b style={{ color: "#1E7A4C" }}>{fmt(convertToUSD(r.montant, r.devise, taux))}</b></Td><Td><StatutBadge value={r.statut} /></Td><Td><button onClick={() => removeRecette(r.id)} style={delBtnStyle}>Suppr.</button></Td></tr>))}</tbody>
+            <tbody>{[...recettes].sort((a, b) => b.date.localeCompare(a.date)).map(r => (<tr key={r.id}><Td>{new Date(r.date).toLocaleDateString("fr-FR")}</Td><Td><b>{r.client}</b></Td><Td>{r.description}</Td><Td>{r.devise}</Td><Td>{r.montant}</Td><Td><b style={{ color: "#1E7A4C" }}>{fmt(convertToUSD(r.montant, r.devise, taux))}</b></Td><Td><StatutBadge value={r.statut} /></Td><Td><div style={{ display: "flex", gap: 6 }}><button onClick={() => startEdit(r)} style={editBtnStyle}>Modifier</button><button onClick={() => removeRecette(r.id)} style={delBtnStyle}>Suppr.</button></div></Td></tr>))}</tbody>
           </table>
         )}
       </Panel>
@@ -697,21 +732,15 @@ function CampagnesPage({ campagnes, addCampagne, removeCampagne, taux }) {
 // PAGE : RÉCAPITULATIF MENSUEL — Vue d'ensemble mois par mois
 // (recettes / dépenses / salaires / charges sociales / résultat net)
 // ============================================================
-function RecapMensuelPage({ moisDisponibles, recettesUSD, depensesUSD, agentsRDC, agentsTN, pointages, monthParams, dtToUsd }) {
+// PAGE : RÉCAPITULATIF MENSUEL — Vue d'ensemble mois par mois
+// (recettes / dépenses / salaires / charges sociales / résultat net)
+// ============================================================
+function RecapMensuelPage({ recapParMois }) {
   function labelMois(mk) {
     const [y, m] = mk.split("-").map(Number);
     return new Date(y, m - 1, 1).toLocaleDateString("fr-FR", { month: "long", year: "numeric" });
   }
-  function calcMois(mk) {
-    const rec = recettesUSD.filter(r => monthKey(r.date) === mk).reduce((s, r) => s + r.montantUSD, 0);
-    const dep = depensesUSD.filter(d => monthKey(d.date) === mk).reduce((s, d) => s + d.montantUSD, 0);
-    const sal =
-      agentsRDC.reduce((s, a) => s + calcNetRDC_RH(a, pointages, monthParams, mk), 0) +
-      agentsTN.reduce((s, a) => s + calcNetTN_RH(a, pointages, monthParams, mk, dtToUsd).netUSD, 0);
-    const charges = agentsRDC.reduce((s, a) => s + calcChargesRDC_RH(a, monthParams, mk).total, 0);
-    const resultat = rec - dep - sal - charges;
-    return { rec, dep, sal, charges, resultat };
-  }
+  const parMoisDesc = [...recapParMois].sort((a, b) => b.mk.localeCompare(a.mk));
 
   return (
     <>
@@ -720,30 +749,97 @@ function RecapMensuelPage({ moisDisponibles, recettesUSD, depensesUSD, agentsRDC
         <div style={{ fontSize: 12.5, color: "#6B6B63", marginTop: 3 }}>Vue d'ensemble de tous les mois — tout ce qui entre, tout ce qui sort</div>
       </div>
       <Panel title="Tous les mois">
-        {moisDisponibles.length === 0 ? <EmptyState text="Aucune donnée enregistrée encore." /> : (
+        {parMoisDesc.length === 0 ? <EmptyState text="Aucune donnée enregistrée encore." /> : (
           <div style={{ overflowX: "auto" }}>
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
               <thead><tr><Th>Mois</Th><Th>Recettes</Th><Th>Dépenses</Th><Th>Salaires versés</Th><Th>Charges sociales</Th><Th>Résultat net</Th></tr></thead>
               <tbody>
-                {moisDisponibles.map(mk => {
-                  const c = calcMois(mk);
-                  return (
-                    <tr key={mk}>
-                      <Td><b style={{ textTransform: "capitalize" }}>{labelMois(mk)}</b></Td>
-                      <Td style={{ color: "#1E7A4C" }}>{fmt(c.rec)}</Td>
-                      <Td style={{ color: "#B4322B" }}>{fmt(c.dep)}</Td>
-                      <Td style={{ color: "#8a6500" }}>{fmt(c.sal)}</Td>
-                      <Td style={{ color: "#FD7E14" }}>{fmt(c.charges)}</Td>
-                      <Td><b style={{ color: c.resultat >= 0 ? "#1E7A4C" : "#B4322B", fontSize: 13 }}>{fmt(c.resultat)}</b></Td>
-                    </tr>
-                  );
-                })}
+                {parMoisDesc.map(c => (
+                  <tr key={c.mk}>
+                    <Td><b style={{ textTransform: "capitalize" }}>{labelMois(c.mk)}</b></Td>
+                    <Td style={{ color: "#1E7A4C" }}>{fmt(c.rec)}</Td>
+                    <Td style={{ color: "#B4322B" }}>{fmt(c.dep)}</Td>
+                    <Td style={{ color: "#8a6500" }}>{fmt(c.sal)}</Td>
+                    <Td style={{ color: "#FD7E14" }}>{fmt(c.charges)}</Td>
+                    <Td><b style={{ color: c.resultat >= 0 ? "#1E7A4C" : "#B4322B", fontSize: 13 }}>{fmt(c.resultat)}</b></Td>
+                  </tr>
+                ))}
               </tbody>
             </table>
           </div>
         )}
       </Panel>
       <div style={{ fontSize: 11, color: "#999" }}>ℹ️ Résultat net = Recettes − Dépenses − Salaires versés − Charges sociales, pour le mois concerné.</div>
+    </>
+  );
+}
+
+// ============================================================
+// PAGE : TRÉSORERIE — Solde cumulé depuis le début, tous mois confondus
+// ============================================================
+function TresoreriePage({ recapParMois }) {
+  function labelMois(mk) {
+    const [y, m] = mk.split("-").map(Number);
+    return new Date(y, m - 1, 1).toLocaleDateString("fr-FR", { month: "long", year: "numeric" });
+  }
+  // Ordre chronologique croissant pour calculer le solde cumulé correctement
+  const parMoisAsc = [...recapParMois].sort((a, b) => a.mk.localeCompare(b.mk));
+  let cumulRunning = 0;
+  const avecCumul = parMoisAsc.map(c => {
+    cumulRunning += c.resultat;
+    return { ...c, cumul: cumulRunning };
+  });
+  const soldeActuel = avecCumul.length ? avecCumul[avecCumul.length - 1].cumul : 0;
+  const totalEntrees = recapParMois.reduce((s, c) => s + c.rec, 0);
+  const totalSorties = recapParMois.reduce((s, c) => s + c.dep + c.sal + c.charges, 0);
+  const maxAbs = Math.max(1, ...avecCumul.map(c => Math.abs(c.resultat)));
+
+  return (
+    <>
+      <div style={{ marginBottom: 22 }}>
+        <h1 style={{ fontSize: 22, margin: 0, fontWeight: 700, color: NAVY }}>Trésorerie</h1>
+        <div style={{ fontSize: 12.5, color: "#6B6B63", marginTop: 3 }}>Solde réel dans la caisse, tous mois confondus (recettes − dépenses − salaires − charges sociales)</div>
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 14, marginBottom: 22 }}>
+        <Kpi label="Solde de trésorerie actuel" value={fmt(soldeActuel)} color={soldeActuel >= 0 ? "#1E7A4C" : "#B4322B"} />
+        <Kpi label="Total entrées (toutes recettes)" value={fmt(totalEntrees)} color="#1E7A4C" />
+        <Kpi label="Total sorties (dépenses + salaires + charges)" value={fmt(totalSorties)} color="#B4322B" />
+      </div>
+
+      <Panel title="Évolution mois par mois">
+        {avecCumul.length === 0 ? <EmptyState text="Aucune donnée enregistrée encore." /> : (
+          <>
+            <div style={{ display: "flex", alignItems: "flex-end", gap: 8, height: 140, marginBottom: 20, borderBottom: "1px solid #E4E1D8", paddingBottom: 4 }}>
+              {avecCumul.map(c => {
+                const h = Math.max(4, Math.round((Math.abs(c.resultat) / maxAbs) * 120));
+                return (
+                  <div key={c.mk} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "flex-end", height: "100%" }} title={`${labelMois(c.mk)} : ${fmt(c.resultat)}`}>
+                    <div style={{ width: "70%", height: h, background: c.resultat >= 0 ? "#1E7A4C" : "#B4322B", borderRadius: "3px 3px 0 0" }} />
+                  </div>
+                );
+              })}
+            </div>
+            <div style={{ overflowX: "auto" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
+                <thead><tr><Th>Mois</Th><Th>Entrées</Th><Th>Sorties</Th><Th>Solde du mois</Th><Th>Solde cumulé</Th></tr></thead>
+                <tbody>
+                  {[...avecCumul].reverse().map(c => (
+                    <tr key={c.mk}>
+                      <Td><b style={{ textTransform: "capitalize" }}>{labelMois(c.mk)}</b></Td>
+                      <Td style={{ color: "#1E7A4C" }}>{fmt(c.rec)}</Td>
+                      <Td style={{ color: "#B4322B" }}>{fmt(c.dep + c.sal + c.charges)}</Td>
+                      <Td><b style={{ color: c.resultat >= 0 ? "#1E7A4C" : "#B4322B" }}>{fmt(c.resultat)}</b></Td>
+                      <Td><b style={{ color: c.cumul >= 0 ? "#1E7A4C" : "#B4322B", fontSize: 13 }}>{fmt(c.cumul)}</b></Td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </>
+        )}
+      </Panel>
+      <div style={{ fontSize: 11, color: "#999" }}>ℹ️ Calculé uniquement à partir des recettes/dépenses/salaires saisis dans le logiciel — sans solde de départ.</div>
     </>
   );
 }
@@ -799,3 +895,4 @@ const inputStyle = { border: "1px solid #E4E1D8", borderRadius: 5, padding: "7px
 const loginInputStyle = { width: "100%", border: "1px solid #E4E1D8", borderRadius: 8, padding: "10px 12px", fontSize: 14, marginTop: 4 };
 const labelStyle = { display: "block", fontSize: 11, fontWeight: 600, color: "#6B6B63", marginBottom: 4 };
 const delBtnStyle = { background: "#FBE9E7", color: "#B4322B", border: "none", padding: "4px 9px", borderRadius: 6, fontSize: 10.5, fontWeight: 700, cursor: "pointer" };
+const editBtnStyle = { background: "#EAF1FF", color: "#1A4FB4", border: "none", padding: "4px 9px", borderRadius: 6, fontSize: 10.5, fontWeight: 700, cursor: "pointer" };
