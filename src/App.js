@@ -40,7 +40,6 @@ const DT_TO_USD_DEFAULT = 0.32;
 const HEURE_DEBUT_RH = "09:00";
 const HEURE_FIN_RH = "17:00";
 const HEURES_JOUR_RH = 8;
-const TAUX_RDC_RH = { cnssSal: 0.05, ipr: 0.15, cnssPat: 0.13, inpp: 0.03, onem: 0.02 };
 
 function joursOuvrablesRH(year, month) {
   let count = 0;
