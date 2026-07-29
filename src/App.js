@@ -414,9 +414,9 @@ export default function App() {
   if (!loaded) return <div style={{ padding: 40, fontFamily: "sans-serif", color: NAVY }}>Chargement des données...</div>;
 
   return (
-    <div style={{ display: "flex", minHeight: "100vh", fontFamily: "'Segoe UI', Helvetica, Arial, sans-serif", background: "#F6F5F1", color: "#1C1C1A" }}>
+    <div className="askg-shell" style={{ display: "flex", minHeight: "100vh", fontFamily: "'Segoe UI', Helvetica, Arial, sans-serif", background: "#F6F5F1", color: "#1C1C1A" }}>
       <Sidebar page={page} setPage={setPage} onLock={() => setUnlocked(false)} />
-      <div style={{ flex: 1, padding: "28px 36px", maxWidth: 1300, overflowX: "auto" }}>
+      <div className="askg-main" style={{ flex: 1, padding: "28px 36px", maxWidth: 1300, overflowX: "auto" }}>
         {page === "dashboard" && <DashboardPage totalRecettesMois={totalRecettesMois} totalDepensesMois={totalDepensesMois} resultatNet={resultatNet} totalSalairesMois={totalSalairesMois} totalChargesSocialesMois={totalChargesSocialesMois} taux={taux} setTaux={updateTaux} recettesUSD={recettesUSD} />}
         {page === "recettes" && <RecettesPage recettes={recettes} addRecette={addRecette} removeRecette={removeRecette} updateRecette={updateRecette} taux={taux} />}
         {page === "depenses" && <DepensesPage depenses={depenses} addDepense={addDepense} removeDepense={removeDepense} updateDepense={updateDepense} taux={taux} />}
@@ -468,21 +468,42 @@ function LoginScreen({ pwInput, setPwInput, onSubmit, error }) {
 }
 
 // ============================================================
+// STYLE RESPONSIVE (mobile / iPhone)
+// ============================================================
+const RESPONSIVE_CSS = `
+@media (max-width: 768px) {
+  .askg-shell { flex-direction: column !important; }
+  .askg-sidebar { width: 100% !important; padding: 12px 0 !important; }
+  .askg-sidebar-header { padding: 0 16px 12px !important; margin-bottom: 8px !important; }
+  .askg-sidebar-nav { display: flex !important; overflow-x: auto !important; -webkit-overflow-scrolling: touch !important; padding: 0 8px !important; }
+  .askg-sidebar-nav > div { white-space: nowrap !important; padding: 8px 14px !important; border-left: none !important; border-bottom: 3px solid transparent !important; }
+  .askg-sidebar-footer { margin: 8px 16px 0 !important; }
+  .askg-main { padding: 14px !important; max-width: 100% !important; }
+  .askg-kpi-grid { grid-template-columns: repeat(2, 1fr) !important; gap: 8px !important; }
+  table { font-size: 11px !important; }
+  h1 { font-size: 18px !important; }
+}
+`;
+
+// ============================================================
 // SIDEBAR
 // ============================================================
 function Sidebar({ page, setPage, onLock }) {
   const items = [["dashboard", "Tableau de bord"], ["recettes", "Recettes"], ["depenses", "Dépenses"], ["salaires_rh", "Salaires"], ["campagnes", "Campagnes Clients"], ["recap_mensuel", "Récapitulatif mensuel"], ["tresorerie", "Trésorerie"], ["parametres", "Paramètres"]];
   return (
-    <div style={{ width: 230, background: NAVY, color: "white", padding: "24px 0", flexShrink: 0 }}>
-      <div style={{ padding: "0 24px 24px", borderBottom: "1px solid rgba(255,255,255,.1)", marginBottom: 16 }}>
+    <div className="askg-sidebar" style={{ width: 230, background: NAVY, color: "white", padding: "24px 0", flexShrink: 0 }}>
+      <style>{RESPONSIVE_CSS}</style>
+      <div className="askg-sidebar-header" style={{ padding: "0 24px 24px", borderBottom: "1px solid rgba(255,255,255,.1)", marginBottom: 16 }}>
         <div style={{ fontSize: 11, letterSpacing: 3, color: GOLD, fontWeight: 600 }}>ASK GROUP</div>
         <div style={{ fontSize: 19, fontWeight: 700, marginTop: 4 }}>Comptabilité</div>
         <div style={{ fontSize: 10, color: "rgba(255,255,255,.5)", marginTop: 2 }}>🟢 Données partagées en ligne</div>
       </div>
-      {items.map(([key, label]) => (
-        <div key={key} onClick={() => setPage(key)} style={{ padding: "13px 24px", fontSize: 13, cursor: "pointer", borderLeft: page === key ? `3px solid ${GOLD}` : "3px solid transparent", background: page === key ? "rgba(212,175,55,.12)" : "transparent", color: page === key ? GOLD_LIGHT : "rgba(255,255,255,.65)", fontWeight: page === key ? 600 : 400 }}>{label}</div>
-      ))}
-      <div style={{ margin: "24px 24px 0" }}>
+      <div className="askg-sidebar-nav">
+        {items.map(([key, label]) => (
+          <div key={key} onClick={() => setPage(key)} style={{ padding: "13px 24px", fontSize: 13, cursor: "pointer", borderLeft: page === key ? `3px solid ${GOLD}` : "3px solid transparent", background: page === key ? "rgba(212,175,55,.12)" : "transparent", color: page === key ? GOLD_LIGHT : "rgba(255,255,255,.65)", fontWeight: page === key ? 600 : 400 }}>{label}</div>
+        ))}
+      </div>
+      <div className="askg-sidebar-footer" style={{ margin: "24px 24px 0" }}>
         <button onClick={onLock} style={{ width: "100%", background: "rgba(255,255,255,.08)", color: "rgba(255,255,255,.8)", border: "none", padding: "10px", borderRadius: 8, fontSize: 12, fontWeight: 600, cursor: "pointer" }}>🔒 Verrouiller la session</button>
       </div>
     </div>
