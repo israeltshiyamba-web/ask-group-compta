@@ -123,6 +123,9 @@ const FERIES_TN_FIXES_RH = [
 ];
 
 function getFerieInfoRH(dateISO, localisation) {
+  // Un weekend n'est jamais un jour férié payé — il n'est de toute façon jamais travaillé/payé
+  const jourSemaine = new Date(dateISO + "T00:00:00").getDay();
+  if (jourSemaine === 0 || jourSemaine === 6) return { isFerie: false };
   const year = parseInt(dateISO.slice(0, 4));
   const mmdd = dateISO.slice(5);
   const feriesFrance = [...FERIES_FRANCE_FIXES_RH, ...calculerPaquesEtFeriesRH(year)];
@@ -171,7 +174,7 @@ function calculDuJourRH(agent, pointagesAgent, monthParamsAgent, date) {
   const tauxMin = fixeJournalier / (HEURES_JOUR_RH * 60);
   const deductionRetard = minutesManquantes * tauxMin;
   const montantJour = Math.max(0, fixeJournalier - deductionRetard);
-  return { montantJour, estFerie: false, minutesManquantes };
+  return { montantJour, estFerie: false, minutesManquantes, minutesTravaillees };
 }
 
 // Formate un total de minutes en "Xj Yh Zmin" (24h = 1 jour) — identique au Suivi RH
@@ -194,12 +197,18 @@ function formatRetard(totalMin) {
 function calcNetRDC_RH(agent, pointages, monthParams, mk) {
   const pts = pointages.filter(p => p.agentId === agent.id && monthKey(p.date) === mk);
   const mp = monthParams.find(m => m.agentId === agent.id && m.mois === mk) || { salaireFixe: 0, primeAssiduite: 0, primePerformance: 0 };
+  const [year, month] = mk.split("-").map(Number);
+  const lastDay = new Date(year, month, 0).getDate();
   let totalFixe = 0, joursA = 0;
-  pts.forEach(p => {
-    const c = calculDuJourRH(agent, pts, mp, p.date);
+  for (let d = 1; d <= lastDay; d++) {
+    const dateISO = `${mk}-${String(d).padStart(2, "0")}`;
+    const c = calculDuJourRH(agent, pts, mp, dateISO);
+    if (c.estFerie) { totalFixe += c.montantJour; continue; }
+    const p = pts.find(pt => pt.date === dateISO);
+    if (!p) continue;
     totalFixe += c.montantJour;
     if (p.statut === "absent") joursA++;
-  });
+  }
   const primeAss = joursA >= 2 ? 0 : (mp.primeAssiduite || 0);
   const primePerf = mp.primePerformance || 0;
   return totalFixe + primeAss + primePerf;
@@ -209,38 +218,52 @@ function calcNetRDC_RH(agent, pointages, monthParams, mk) {
 function calcDetailsRDC_RH(agent, pointages, monthParams, mk) {
   const pts = pointages.filter(p => p.agentId === agent.id && monthKey(p.date) === mk);
   const mp = monthParams.find(m => m.agentId === agent.id && m.mois === mk) || { salaireFixe: 0, primeAssiduite: 0, primePerformance: 0 };
-  let joursP = 0, joursA = 0, retardTotal = 0;
-  pts.forEach(p => {
+  const [year, month] = mk.split("-").map(Number);
+  const lastDay = new Date(year, month, 0).getDate();
+  let joursP = 0, joursA = 0, retardTotal = 0, tempsTravailleTotal = 0;
+  for (let d = 1; d <= lastDay; d++) {
+    const dateISO = `${mk}-${String(d).padStart(2, "0")}`;
+    const c = calculDuJourRH(agent, pts, mp, dateISO);
+    if (c.estFerie) continue;
+    const p = pts.find(pt => pt.date === dateISO);
+    if (!p) continue;
     if (p.statut === "absent") {
       joursA++;
     } else {
       joursP++;
-      const c = calculDuJourRH(agent, pts, mp, p.date);
-      if (!c.estFerie) retardTotal += (c.minutesManquantes || 0);
+      retardTotal += (c.minutesManquantes || 0);
+      tempsTravailleTotal += (c.minutesTravaillees || 0);
     }
-  });
-  return { joursP, joursA, retardTotal };
+  }
+  return { joursP, joursA, retardTotal, tempsTravailleTotal };
 }
 
 // Récap NET agent Tunisie (DT + équivalent USD) + détails jours/retard
 function calcNetTN_RH(agent, pointages, monthParams, mk, dtToUsd) {
   const pts = pointages.filter(p => p.agentId === agent.id && monthKey(p.date) === mk);
   const mp = monthParams.find(m => m.agentId === agent.id && m.mois === mk) || { salaireFixe: 0, primeAssiduite: 0, primePerformance: 0 };
-  let totalFixe = 0, joursP = 0, joursA = 0, retardTotal = 0;
-  pts.forEach(p => {
+  const [year, month] = mk.split("-").map(Number);
+  const lastDay = new Date(year, month, 0).getDate();
+  let totalFixe = 0, joursP = 0, joursA = 0, retardTotal = 0, tempsTravailleTotal = 0;
+  for (let d = 1; d <= lastDay; d++) {
+    const dateISO = `${mk}-${String(d).padStart(2, "0")}`;
+    const c = calculDuJourRH(agent, pts, mp, dateISO);
+    if (c.estFerie) { totalFixe += c.montantJour; continue; }
+    const p = pts.find(pt => pt.date === dateISO);
+    if (!p) continue;
+    totalFixe += c.montantJour;
     if (p.statut === "absent") {
       joursA++;
     } else {
       joursP++;
-      const c = calculDuJourRH(agent, pts, mp, p.date);
-      totalFixe += c.montantJour;
-      if (!c.estFerie) retardTotal += (c.minutesManquantes || 0);
+      retardTotal += (c.minutesManquantes || 0);
+      tempsTravailleTotal += (c.minutesTravaillees || 0);
     }
-  });
+  }
   const primeAss = mp.primeAssiduite || 0;
   const primePerf = mp.primePerformance || 0;
   const netDT = totalFixe + primeAss + primePerf;
-  return { netDT, netUSD: netDT * dtToUsd, joursP, joursA, retardTotal };
+  return { netDT, netUSD: netDT * dtToUsd, joursP, joursA, retardTotal, tempsTravailleTotal };
 }
 
 // Charges sociales RDC — DÉSACTIVÉES jusqu'à nouvel ordre (contrats pas encore effectifs)
@@ -698,7 +721,7 @@ function SalairesRHPage({ agentsRDC, agentsTN, pointages, monthParams, dtToUsd, 
         {agentsRDC.length === 0 ? <EmptyState text="Aucun agent RDC dans le Suivi RH." /> : (
           <div style={{ overflowX: "auto" }}>
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
-              <thead><tr><Th>Agent</Th><Th>Jours travaillés</Th><Th>Jours d'absence</Th><Th>Retard cumulé</Th><Th>Salaire net à verser</Th></tr></thead>
+              <thead><tr><Th>Agent</Th><Th>Jours travaillés</Th><Th>Jours d'absence</Th><Th>Temps travaillé</Th><Th>Retard cumulé</Th><Th>Salaire net à verser</Th></tr></thead>
               <tbody>
                 {agentsRDC.map(agent => {
                   const net = calcNetRDC_RH(agent, pointages, monthParams, moisRH);
@@ -708,6 +731,7 @@ function SalairesRHPage({ agentsRDC, agentsTN, pointages, monthParams, dtToUsd, 
                       <Td><b>{agent.nom}</b></Td>
                       <Td>{det.joursP}</Td>
                       <Td><span style={{ background: det.joursA >= 2 ? "#FBE9E7" : "#E6F4EC", color: det.joursA >= 2 ? "#B4322B" : "#1E7A4C", padding: "2px 8px", borderRadius: 5, fontSize: 11, fontWeight: 600 }}>{det.joursA}</span></Td>
+                      <Td>{formatRetard(det.tempsTravailleTotal)}</Td>
                       <Td>{formatRetard(det.retardTotal)}</Td>
                       <Td><b style={{ color: "#1E7A4C", fontSize: 13 }}>{fmt(net)}</b></Td>
                     </tr>
@@ -750,7 +774,7 @@ function SalairesRHPage({ agentsRDC, agentsTN, pointages, monthParams, dtToUsd, 
         {agentsTN.length === 0 ? <EmptyState text="Aucun agent Tunisie dans le Suivi RH." /> : (
           <div style={{ overflowX: "auto" }}>
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
-              <thead><tr><Th>Agent</Th><Th>Jours travaillés</Th><Th>Jours d'absence</Th><Th>Retard cumulé</Th><Th>Salaire net à verser (DT)</Th><Th>Équivalent (USD)</Th></tr></thead>
+              <thead><tr><Th>Agent</Th><Th>Jours travaillés</Th><Th>Jours d'absence</Th><Th>Temps travaillé</Th><Th>Retard cumulé</Th><Th>Salaire net à verser (DT)</Th><Th>Équivalent (USD)</Th></tr></thead>
               <tbody>
                 {agentsTN.map(agent => {
                   const r = calcNetTN_RH(agent, pointages, monthParams, moisRH, dtToUsd);
@@ -759,6 +783,7 @@ function SalairesRHPage({ agentsRDC, agentsTN, pointages, monthParams, dtToUsd, 
                       <Td><b>{agent.nom}</b></Td>
                       <Td>{r.joursP}</Td>
                       <Td><span style={{ background: "#E6F4EC", color: "#1E7A4C", padding: "2px 8px", borderRadius: 5, fontSize: 11, fontWeight: 600 }}>{r.joursA}</span></Td>
+                      <Td>{formatRetard(r.tempsTravailleTotal)}</Td>
                       <Td>{formatRetard(r.retardTotal)}</Td>
                       <Td><b style={{ color: "#8a6500", fontSize: 13 }}>{fmt(r.netDT, "DT")}</b></Td>
                       <Td><b style={{ color: "#1E7A4C" }}>{fmt(r.netUSD)}</b></Td>
