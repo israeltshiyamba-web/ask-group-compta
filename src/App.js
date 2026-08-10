@@ -148,12 +148,12 @@ function calculDuJourRH(agent, pointagesAgent, monthParamsAgent, date) {
   const jOuvrables = joursOuvrablesRH(year, month);
   const fixeJournalier = (mp.salaireFixe || 0) / jOuvrables;
 
-  if (ferieInfo.isFerie) return { montantJour: fixeJournalier };
-  if (!p || p.statut === "absent") return { montantJour: 0, estAbsentNJ: p && p.statut === "absent" && !p.justifie };
+  if (ferieInfo.isFerie) return { montantJour: fixeJournalier, estFerie: true, minutesManquantes: 0 };
+  if (!p || p.statut === "absent") return { montantJour: 0, estFerie: false, minutesManquantes: HEURES_JOUR_RH * 60, estAbsentNJ: p && p.statut === "absent" && !p.justifie };
 
   const arriveeMin = timeToMinutesRH(p.heureArrivee);
   const departMin = timeToMinutesRH(p.heureDepart);
-  if (!arriveeMin && !departMin) return { montantJour: fixeJournalier };
+  if (!arriveeMin && !departMin) return { montantJour: fixeJournalier, estFerie: false, minutesManquantes: 0 };
 
   let minutesTravaillees = 0;
   if (arriveeMin && departMin) {
@@ -171,58 +171,82 @@ function calculDuJourRH(agent, pointagesAgent, monthParamsAgent, date) {
   const tauxMin = fixeJournalier / (HEURES_JOUR_RH * 60);
   const deductionRetard = minutesManquantes * tauxMin;
   const montantJour = Math.max(0, fixeJournalier - deductionRetard);
-  return { montantJour };
+  return { montantJour, estFerie: false, minutesManquantes };
+}
+
+// Formate un total de minutes en "Xj Yh Zmin" (24h = 1 jour) — identique au Suivi RH
+function formatRetard(totalMin) {
+  const t = Math.round(totalMin || 0);
+  if (t <= 0) return "0 min";
+  const jours = Math.floor(t / 1440);
+  const resteApresJours = t % 1440;
+  const heures = Math.floor(resteApresJours / 60);
+  const minutes = resteApresJours % 60;
+  const parts = [];
+  if (jours > 0) parts.push(`${jours}j`);
+  if (heures > 0) parts.push(`${heures}h`);
+  if (minutes > 0 || parts.length === 0) parts.push(`${minutes}min`);
+  return parts.join(" ");
 }
 
 // Récap NET agent RDC (USD) — reprend exactement la règle du RH :
-// prime d'assiduité annulée si 2 absences non justifiées ou plus
+// prime d'assiduité annulée si 2 absences (justifiées ou non) ou plus
 function calcNetRDC_RH(agent, pointages, monthParams, mk) {
   const pts = pointages.filter(p => p.agentId === agent.id && monthKey(p.date) === mk);
   const mp = monthParams.find(m => m.agentId === agent.id && m.mois === mk) || { salaireFixe: 0, primeAssiduite: 0, primePerformance: 0 };
-  let totalFixe = 0, absNJ = 0;
+  let totalFixe = 0, joursA = 0;
   pts.forEach(p => {
     const c = calculDuJourRH(agent, pts, mp, p.date);
     totalFixe += c.montantJour;
-    if (p.statut === "absent" && !p.justifie) absNJ++;
+    if (p.statut === "absent") joursA++;
   });
-  const primeAss = absNJ >= 2 ? 0 : (mp.primeAssiduite || 0);
+  const primeAss = joursA >= 2 ? 0 : (mp.primeAssiduite || 0);
   const primePerf = mp.primePerformance || 0;
   return totalFixe + primeAss + primePerf;
 }
 
-// Récap NET agent Tunisie (DT + équivalent USD)
+// Détails complémentaires agent RDC pour l'affichage (jours travaillés, jours d'absence, retard cumulé)
+function calcDetailsRDC_RH(agent, pointages, monthParams, mk) {
+  const pts = pointages.filter(p => p.agentId === agent.id && monthKey(p.date) === mk);
+  const mp = monthParams.find(m => m.agentId === agent.id && m.mois === mk) || { salaireFixe: 0, primeAssiduite: 0, primePerformance: 0 };
+  let joursP = 0, joursA = 0, retardTotal = 0;
+  pts.forEach(p => {
+    if (p.statut === "absent") {
+      joursA++;
+    } else {
+      joursP++;
+      const c = calculDuJourRH(agent, pts, mp, p.date);
+      if (!c.estFerie) retardTotal += (c.minutesManquantes || 0);
+    }
+  });
+  return { joursP, joursA, retardTotal };
+}
+
+// Récap NET agent Tunisie (DT + équivalent USD) + détails jours/retard
 function calcNetTN_RH(agent, pointages, monthParams, mk, dtToUsd) {
   const pts = pointages.filter(p => p.agentId === agent.id && monthKey(p.date) === mk);
   const mp = monthParams.find(m => m.agentId === agent.id && m.mois === mk) || { salaireFixe: 0, primeAssiduite: 0, primePerformance: 0 };
-  let totalFixe = 0;
+  let totalFixe = 0, joursP = 0, joursA = 0, retardTotal = 0;
   pts.forEach(p => {
-    const c = calculDuJourRH(agent, pts, mp, p.date);
-    totalFixe += c.montantJour;
+    if (p.statut === "absent") {
+      joursA++;
+    } else {
+      joursP++;
+      const c = calculDuJourRH(agent, pts, mp, p.date);
+      totalFixe += c.montantJour;
+      if (!c.estFerie) retardTotal += (c.minutesManquantes || 0);
+    }
   });
   const primeAss = mp.primeAssiduite || 0;
   const primePerf = mp.primePerformance || 0;
   const netDT = totalFixe + primeAss + primePerf;
-  return { netDT, netUSD: netDT * dtToUsd };
+  return { netDT, netUSD: netDT * dtToUsd, joursP, joursA, retardTotal };
 }
 
-// Charges sociales RDC — à la charge de l'entreprise, jamais déduites de l'agent
-// (calculées sur le salaire fixe mensuel, identique à la logique du Suivi RH)
-// Les contrats officiels prenant effet en août 2026, aucune charge sociale
-// n'est due pour mai, juin et juillet 2026.
-const TAUX_RDC_RH = { cnssSal: 0.05, ipr: 0.15, cnssPat: 0.13, inpp: 0.03, onem: 0.02 };
-const DEBUT_CHARGES_SOCIALES_RH = "2026-08";
-function calcChargesRDC_RH(agent, monthParams, mk) {
-  if (mk < DEBUT_CHARGES_SOCIALES_RH) {
-    return { cnssSal: 0, ipr: 0, cnssPat: 0, inpp: 0, onem: 0, total: 0 };
-  }
-  const mp = monthParams.find(m => m.agentId === agent.id && m.mois === mk) || { salaireFixe: 0 };
-  const brut = mp.salaireFixe || 0;
-  const cnssSal = brut * TAUX_RDC_RH.cnssSal;
-  const ipr = Math.max(0, (brut - cnssSal) * TAUX_RDC_RH.ipr);
-  const cnssPat = brut * TAUX_RDC_RH.cnssPat;
-  const inpp = brut * TAUX_RDC_RH.inpp;
-  const onem = brut * TAUX_RDC_RH.onem;
-  return { cnssSal, ipr, cnssPat, inpp, onem, total: cnssSal + ipr + cnssPat + inpp + onem };
+// Charges sociales RDC — DÉSACTIVÉES jusqu'à nouvel ordre (contrats pas encore effectifs)
+// Taux prévus pour réactivation : CNSS salarié 5%, IPR 15%, CNSS patronal 13%, INPP 3%, ONEM 2%
+function calcChargesRDC_RH() {
+  return { cnssSal: 0, ipr: 0, cnssPat: 0, inpp: 0, onem: 0, total: 0 };
 }
 
 export default function App() {
@@ -388,7 +412,7 @@ export default function App() {
     agentsRHRDC.reduce((s, agent) => s + calcNetRDC_RH(agent, pointagesRH, monthParamsRH, currentMonth), 0) +
     agentsRHTN.reduce((s, agent) => s + calcNetTN_RH(agent, pointagesRH, monthParamsRH, currentMonth, dtToUsdRH).netUSD, 0);
 
-  // Total des charges sociales RDC du mois (0 pour mai/juin/juillet 2026, cf. calcChargesRDC_RH)
+  // Total des charges sociales RDC du mois — désactivées jusqu'à nouvel ordre (toujours 0)
   const totalChargesSocialesMois = agentsRHRDC.reduce((s, agent) => s + calcChargesRDC_RH(agent, monthParamsRH, currentMonth).total, 0);
 
   // Résultat net = tout ce qui entre moins tout ce qui sort (recettes, dépenses, salaires, charges sociales)
@@ -672,20 +696,31 @@ function SalairesRHPage({ agentsRDC, agentsTN, pointages, monthParams, dtToUsd, 
 
       <Panel title={`🇨🇩 Agents RDC (${agentsRDC.length}) — Salaire net à verser (USD)`}>
         {agentsRDC.length === 0 ? <EmptyState text="Aucun agent RDC dans le Suivi RH." /> : (
-          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
-            <thead><tr><Th>Agent</Th><Th>Salaire net à verser</Th></tr></thead>
-            <tbody>
-              {agentsRDC.map(agent => {
-                const net = calcNetRDC_RH(agent, pointages, monthParams, moisRH);
-                return (<tr key={agent.id}><Td><b>{agent.nom}</b></Td><Td><b style={{ color: "#1E7A4C", fontSize: 13 }}>{fmt(net)}</b></Td></tr>);
-              })}
-            </tbody>
-          </table>
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
+              <thead><tr><Th>Agent</Th><Th>Jours travaillés</Th><Th>Jours d'absence</Th><Th>Retard cumulé</Th><Th>Salaire net à verser</Th></tr></thead>
+              <tbody>
+                {agentsRDC.map(agent => {
+                  const net = calcNetRDC_RH(agent, pointages, monthParams, moisRH);
+                  const det = calcDetailsRDC_RH(agent, pointages, monthParams, moisRH);
+                  return (
+                    <tr key={agent.id}>
+                      <Td><b>{agent.nom}</b></Td>
+                      <Td>{det.joursP}</Td>
+                      <Td><span style={{ background: det.joursA >= 2 ? "#FBE9E7" : "#E6F4EC", color: det.joursA >= 2 ? "#B4322B" : "#1E7A4C", padding: "2px 8px", borderRadius: 5, fontSize: 11, fontWeight: 600 }}>{det.joursA}</span></Td>
+                      <Td>{formatRetard(det.retardTotal)}</Td>
+                      <Td><b style={{ color: "#1E7A4C", fontSize: 13 }}>{fmt(net)}</b></Td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
         )}
       </Panel>
 
       <Panel title={`🏛 Charges sociales RDC (${agentsRDC.length}) — À la charge de la société, jamais déduites de l'agent`}>
-        <div style={{ fontSize: 11, color: "#6B6B63", marginBottom: 10 }}>Ces montants s'ajoutent au salaire net ci-dessus — l'agent ne les paie pas et ne les voit pas sur son versement. Aucune charge sociale n'est due pour mai, juin et juillet 2026 (contrats officiels à partir d'août 2026).</div>
+        <div style={{ fontSize: 11, color: "#B4322B", marginBottom: 10, fontWeight: 600 }}>⏸️ Désactivées jusqu'à nouvel ordre — les contrats officiels ne sont pas encore effectifs. Toutes les valeurs ci-dessous sont à 0.</div>
         {agentsRDC.length === 0 ? <EmptyState text="Aucun agent RDC dans le Suivi RH." /> : (
           <div style={{ overflowX: "auto" }}>
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
@@ -713,15 +748,26 @@ function SalairesRHPage({ agentsRDC, agentsTN, pointages, monthParams, dtToUsd, 
 
       <Panel title={`🇹🇳 Agents Tunisie (${agentsTN.length}) — Salaire net à verser (DT + équivalent USD)`}>
         {agentsTN.length === 0 ? <EmptyState text="Aucun agent Tunisie dans le Suivi RH." /> : (
-          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
-            <thead><tr><Th>Agent</Th><Th>Salaire net à verser (DT)</Th><Th>Équivalent (USD)</Th></tr></thead>
-            <tbody>
-              {agentsTN.map(agent => {
-                const r = calcNetTN_RH(agent, pointages, monthParams, moisRH, dtToUsd);
-                return (<tr key={agent.id}><Td><b>{agent.nom}</b></Td><Td><b style={{ color: "#8a6500", fontSize: 13 }}>{fmt(r.netDT, "DT")}</b></Td><Td><b style={{ color: "#1E7A4C" }}>{fmt(r.netUSD)}</b></Td></tr>);
-              })}
-            </tbody>
-          </table>
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
+              <thead><tr><Th>Agent</Th><Th>Jours travaillés</Th><Th>Jours d'absence</Th><Th>Retard cumulé</Th><Th>Salaire net à verser (DT)</Th><Th>Équivalent (USD)</Th></tr></thead>
+              <tbody>
+                {agentsTN.map(agent => {
+                  const r = calcNetTN_RH(agent, pointages, monthParams, moisRH, dtToUsd);
+                  return (
+                    <tr key={agent.id}>
+                      <Td><b>{agent.nom}</b></Td>
+                      <Td>{r.joursP}</Td>
+                      <Td><span style={{ background: "#E6F4EC", color: "#1E7A4C", padding: "2px 8px", borderRadius: 5, fontSize: 11, fontWeight: 600 }}>{r.joursA}</span></Td>
+                      <Td>{formatRetard(r.retardTotal)}</Td>
+                      <Td><b style={{ color: "#8a6500", fontSize: 13 }}>{fmt(r.netDT, "DT")}</b></Td>
+                      <Td><b style={{ color: "#1E7A4C" }}>{fmt(r.netUSD)}</b></Td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
         )}
       </Panel>
       <div style={{ fontSize: 11, color: "#999" }}>ℹ️ Cette section reflète automatiquement ce qui est saisi dans le Suivi RH (agents, pointages, primes). Elle n'est pas modifiable ici.</div>
@@ -766,12 +812,6 @@ function CampagnesPage({ campagnes, addCampagne, removeCampagne, taux }) {
   );
 }
 
-// ============================================================
-// PAGE : PARAMÈTRES
-// ============================================================
-// ============================================================
-// PAGE : RÉCAPITULATIF MENSUEL — Vue d'ensemble mois par mois
-// (recettes / dépenses / salaires / charges sociales / résultat net)
 // ============================================================
 // PAGE : RÉCAPITULATIF MENSUEL — Vue d'ensemble mois par mois
 // (recettes / dépenses / salaires / charges sociales / résultat net)
