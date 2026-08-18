@@ -681,6 +681,8 @@ function AssistantPage({ addDepense, addRecette }) {
   const [ecoute, setEcoute] = useState(false);
   const [resultat, setResultat] = useState(null);
   const [saved, setSaved] = useState(false);
+  const [analysing, setAnalysing] = useState(false);
+  const [erreurIA, setErreurIA] = useState("");
   const recognitionRef = useRef(null);
 
   function toggleEcoute() {
@@ -709,9 +711,21 @@ function AssistantPage({ addDepense, addRecette }) {
     setEcoute(true);
   }
 
-  function analyser() {
+  async function analyser() {
     if (!texte.trim()) return;
-    setResultat(analyserTexte(texte));
+    setAnalysing(true);
+    setErreurIA("");
+    try {
+      const { data, error } = await supabase.functions.invoke("analyser-texte-nicole", { body: { texte } });
+      if (error || !data || data.error) throw new Error(data?.error || error?.message || "Erreur inconnue");
+      setResultat(data);
+    } catch (e) {
+      // Repli automatique : si Gemini est indisponible, on garde l'ancien système par mots-clés
+      // pour que le formulaire se remplisse quand même, avec un message clair.
+      setErreurIA("⚠️ Nicole n'a pas pu joindre son IA (repli sur la reconnaissance simple par mots-clés). " + e.message);
+      setResultat(analyserTexte(texte));
+    }
+    setAnalysing(false);
     setSaved(false);
   }
 
@@ -745,10 +759,11 @@ function AssistantPage({ addDepense, addRecette }) {
           <button className="askg-btn" onClick={(e) => { ripple(e); toggleEcoute(); }} style={{ background: ecoute ? "#E0656B" : "rgba(255,255,255,.08)", color: ecoute ? "white" : "#E7ECF5", border: "none", padding: "9px 18px", borderRadius: 8, fontWeight: 700, cursor: "pointer", fontSize: 12.5, position: "relative", overflow: "hidden" }}>
             {ecoute ? "⏺ Écoute en cours… (clique pour arrêter)" : "🎙️ Parler au lieu d'écrire"}
           </button>
-          <button className="askg-btn" onClick={(e) => { if (texte.trim()) { ripple(e); analyser(); } }} disabled={!texte.trim()} style={{ background: `linear-gradient(135deg, ${RED}, #A31D14)`, color: "white", border: "none", padding: "9px 18px", borderRadius: 8, fontWeight: 700, cursor: texte.trim() ? "pointer" : "not-allowed", fontSize: 12.5, opacity: texte.trim() ? 1 : .5, position: "relative", overflow: "hidden" }}>
-            Analyser
+          <button className="askg-btn" onClick={(e) => { if (texte.trim() && !analysing) { ripple(e); analyser(); } }} disabled={!texte.trim() || analysing} style={{ background: `linear-gradient(135deg, ${RED}, #A31D14)`, color: "white", border: "none", padding: "9px 18px", borderRadius: 8, fontWeight: 700, cursor: (texte.trim() && !analysing) ? "pointer" : "not-allowed", fontSize: 12.5, opacity: (texte.trim() && !analysing) ? 1 : .5, position: "relative", overflow: "hidden" }}>
+            {analysing ? "Nicole réfléchit…" : "Analyser"}
           </button>
         </div>
+        {erreurIA && <div style={{ marginTop: 10, fontSize: 11.5, color: "#D4A72C" }}>{erreurIA}</div>}
       </Panel>
 
       {resultat && (
