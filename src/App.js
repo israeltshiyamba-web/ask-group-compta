@@ -602,7 +602,7 @@ const RESPONSIVE_CSS = `
 // (pas une vraie IA) : gratuit, mais à corriger/valider avant d'enregistrer.
 // ============================================================
 const MOTS_DEPENSE = ["dépensé", "depense", "payé", "paye", "acheté", "achete", "facture", "sorti", "sortie", "réglé", "regle"];
-const MOTS_RECETTE = ["reçu", "recu", "encaissé", "encaisse", "rentrée", "rentree", "entrée", "entree", "vente", "vendu", "client m'a payé", "paiement reçu"];
+const MOTS_RECETTE = ["reçu", "recu", "encaissé", "encaisse", "rentrée", "rentree", "entrée", "entree", "vente", "vendu", "client m'a payé", "paiement reçu", "dépôt", "depot", "déposé", "depose", "apport"];
 const MOTS_CATEGORIE = [
   { motsClefs: ["loyer", "local", "bureau à louer"], categorie: "Loyer & charges locaux" },
   { motsClefs: ["internet", "téléphon", "telephon", "wifi", "forfait"], categorie: "Internet & téléphonie" },
@@ -616,11 +616,39 @@ const MOTS_CATEGORIE = [
   { motsClefs: ["taxe", "impôt", "impot", "fiscal"], categorie: "Taxes & impôts" },
 ];
 
+const MOIS_FR = { "janvier": 1, "février": 2, "fevrier": 2, "mars": 3, "avril": 4, "mai": 5, "juin": 6, "juillet": 7, "août": 8, "aout": 8, "septembre": 9, "octobre": 10, "novembre": 11, "décembre": 12, "decembre": 12 };
+
 function analyserTexte(texteBrut) {
   const texte = texteBrut.toLowerCase();
 
-  // --- Montant ---
-  const matchMontant = texte.match(/(\d+[.,]?\d*)/);
+  // --- Date : cherche d'abord une vraie date écrite (en lettres ou en chiffres),
+  // sinon "hier"/"aujourd'hui", sinon la date du jour par défaut.
+  // On retire la date détectée du texte avant de chercher le montant, pour ne pas
+  // confondre le jour de la date (ex: le "10" de "10 juillet") avec un montant.
+  let date = todayISO();
+  let texteSansDate = texte;
+  const matchDateLettres = texte.match(/(\d{1,2})\s+(janvier|février|fevrier|mars|avril|mai|juin|juillet|août|aout|septembre|octobre|novembre|décembre|decembre)(?:\s+(\d{4}))?/);
+  const matchDateChiffres = texte.match(/\b(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})\b/);
+  if (matchDateLettres) {
+    const jour = matchDateLettres[1].padStart(2, "0");
+    const mois = String(MOIS_FR[matchDateLettres[2]]).padStart(2, "0");
+    const annee = matchDateLettres[3] || String(new Date().getFullYear());
+    date = `${annee}-${mois}-${jour}`;
+    texteSansDate = texte.replace(matchDateLettres[0], " ");
+  } else if (matchDateChiffres) {
+    const jour = matchDateChiffres[1].padStart(2, "0");
+    const mois = matchDateChiffres[2].padStart(2, "0");
+    let annee = matchDateChiffres[3];
+    if (annee.length === 2) annee = "20" + annee;
+    date = `${annee}-${mois}-${jour}`;
+    texteSansDate = texte.replace(matchDateChiffres[0], " ");
+  } else if (texte.includes("hier")) {
+    const d = new Date(); d.setDate(d.getDate() - 1);
+    date = d.toISOString().slice(0, 10);
+  }
+
+  // --- Montant (cherché dans le texte SANS la date, pour éviter toute confusion) ---
+  const matchMontant = texteSansDate.match(/(\d+[.,]?\d*)/);
   const montant = matchMontant ? matchMontant[1].replace(",", ".") : "";
 
   // --- Devise ---
@@ -638,13 +666,6 @@ function analyserTexte(texteBrut) {
   let categorie = CATEGORIES_DEPENSES[CATEGORIES_DEPENSES.length - 1]; // "Autres" par défaut
   for (const c of MOTS_CATEGORIE) {
     if (c.motsClefs.some(m => texte.includes(m))) { categorie = c.categorie; break; }
-  }
-
-  // --- Date : détecte "hier" / "aujourd'hui", sinon date du jour ---
-  let date = todayISO();
-  if (texte.includes("hier")) {
-    const d = new Date(); d.setDate(d.getDate() - 1);
-    date = d.toISOString().slice(0, 10);
   }
 
   // --- Nom (client ou fournisseur) : cherche après "chez", "pour", "de la part de" ---
