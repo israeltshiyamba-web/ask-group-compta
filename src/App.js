@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { createClient } from '@supabase/supabase-js';
 
 // ============================================================
@@ -11,9 +11,10 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
-const NAVY = "#0A1B3D";
-const GOLD = "#D4AF37";
-const GOLD_LIGHT = "#F2E2A8";
+const NAVY = "#0F3D2E";   // vert forêt profond (au lieu du bleu marine du RH)
+const CATEGORIES_DEPENSES = ["Loyer & charges locaux", "Internet & téléphonie", "Logiciels CRM & VoIP", "Matériel informatique", "Électricité & eau", "Transport", "Fournitures de bureau", "Formation", "Frais bancaires", "Taxes & impôts", "Autres"];
+const GOLD = "#C17A3D";   // cuivre chaud (au lieu de l'or du RH)
+const GOLD_LIGHT = "#F0DCC0";  // crème chaud (au lieu du jaune pâle du RH)
 const APP_NAME = "comptabilite";
 
 function uid() { return Math.random().toString(36).slice(2, 10); }
@@ -465,6 +466,7 @@ export default function App() {
       <Sidebar page={page} setPage={setPage} onLock={() => setUnlocked(false)} />
       <div className="askg-main" style={{ flex: 1, padding: "28px 36px", maxWidth: 1300, overflowX: "auto" }}>
         {page === "dashboard" && <DashboardPage totalRecettesMois={totalRecettesMois} totalDepensesMois={totalDepensesMois} resultatNet={resultatNet} totalSalairesMois={totalSalairesMois} totalChargesSocialesMois={totalChargesSocialesMois} taux={taux} setTaux={updateTaux} recettesUSD={recettesUSD} />}
+        {page === "assistant" && <AssistantPage addDepense={addDepense} addRecette={addRecette} />}
         {page === "recettes" && <RecettesPage recettes={recettes} addRecette={addRecette} removeRecette={removeRecette} updateRecette={updateRecette} taux={taux} />}
         {page === "depenses" && <DepensesPage depenses={depenses} addDepense={addDepense} removeDepense={removeDepense} updateDepense={updateDepense} taux={taux} />}
         {page === "salaires_rh" && <SalairesRHPage agentsRDC={agentsRHRDC} agentsTN={agentsRHTN} pointages={pointagesRH} monthParams={monthParamsRH} dtToUsd={dtToUsdRH} setDtToUsd={setDtToUsdRH} moisSelectionne={moisSelectionne} setMoisSelectionne={setMoisSelectionne} moisRH={moisRH} />}
@@ -535,8 +537,173 @@ const RESPONSIVE_CSS = `
 // ============================================================
 // SIDEBAR
 // ============================================================
+// ============================================================
+// ASSISTANT — analyse un texte libre (tapé ou dicté) pour pré-remplir
+// automatiquement une dépense ou une recette. Fonctionne par mots-clés
+// (pas une vraie IA) : gratuit, mais à corriger/valider avant d'enregistrer.
+// ============================================================
+const MOTS_DEPENSE = ["dépensé", "depense", "payé", "paye", "acheté", "achete", "facture", "sorti", "sortie", "réglé", "regle"];
+const MOTS_RECETTE = ["reçu", "recu", "encaissé", "encaisse", "rentrée", "rentree", "entrée", "entree", "vente", "vendu", "client m'a payé", "paiement reçu"];
+const MOTS_CATEGORIE = [
+  { motsClefs: ["loyer", "local", "bureau à louer"], categorie: "Loyer & charges locaux" },
+  { motsClefs: ["internet", "téléphon", "telephon", "wifi", "forfait"], categorie: "Internet & téléphonie" },
+  { motsClefs: ["crm", "voip", "onoff", "logiciel", "abonnement logiciel"], categorie: "Logiciels CRM & VoIP" },
+  { motsClefs: ["ordinateur", "pc ", "matériel", "materiel", "imprimante", "casque", "écran", "ecran"], categorie: "Matériel informatique" },
+  { motsClefs: ["électricité", "electricite", "courant", "eau", "snel", "regideso"], categorie: "Électricité & eau" },
+  { motsClefs: ["transport", "essence", "carburant", "taxi", "uber", "moto"], categorie: "Transport" },
+  { motsClefs: ["fourniture", "papier", "stylo", "encre", "cartouche"], categorie: "Fournitures de bureau" },
+  { motsClefs: ["formation", "cours", "séminaire", "seminaire"], categorie: "Formation" },
+  { motsClefs: ["frais bancaire", "banque", "virement", "commission bancaire"], categorie: "Frais bancaires" },
+  { motsClefs: ["taxe", "impôt", "impot", "fiscal"], categorie: "Taxes & impôts" },
+];
+
+function analyserTexte(texteBrut) {
+  const texte = texteBrut.toLowerCase();
+
+  // --- Montant ---
+  const matchMontant = texte.match(/(\d+[.,]?\d*)/);
+  const montant = matchMontant ? matchMontant[1].replace(",", ".") : "";
+
+  // --- Devise ---
+  let devise = "USD";
+  if (/eur|€|euro/.test(texte)) devise = "EUR";
+  else if (/cdf|fc\b|franc congolais|franc/.test(texte)) devise = "CDF";
+  else if (/usd|\$|dollar/.test(texte)) devise = "USD";
+
+  // --- Type : dépense ou recette (comptage de mots-clés, dépense par défaut si égalité) ---
+  const scoreDepense = MOTS_DEPENSE.filter(m => texte.includes(m)).length;
+  const scoreRecette = MOTS_RECETTE.filter(m => texte.includes(m)).length;
+  const type = scoreRecette > scoreDepense ? "recette" : "depense";
+
+  // --- Catégorie (dépenses uniquement) ---
+  let categorie = CATEGORIES_DEPENSES[CATEGORIES_DEPENSES.length - 1]; // "Autres" par défaut
+  for (const c of MOTS_CATEGORIE) {
+    if (c.motsClefs.some(m => texte.includes(m))) { categorie = c.categorie; break; }
+  }
+
+  // --- Date : détecte "hier" / "aujourd'hui", sinon date du jour ---
+  let date = todayISO();
+  if (texte.includes("hier")) {
+    const d = new Date(); d.setDate(d.getDate() - 1);
+    date = d.toISOString().slice(0, 10);
+  }
+
+  // --- Nom (client ou fournisseur) : cherche après "chez", "pour", "de la part de" ---
+  let nom = "";
+  const matchNom = texteBrut.match(/(?:chez|pour|de la part de|par)\s+([A-ZÀ-Ý][\wÀ-ÿ' -]{1,30})/);
+  if (matchNom) nom = matchNom[1].trim();
+
+  return { montant, devise, type, categorie, date, nom, description: texteBrut.trim() };
+}
+
+function AssistantPage({ addDepense, addRecette }) {
+  const [texte, setTexte] = useState("");
+  const [ecoute, setEcoute] = useState(false);
+  const [resultat, setResultat] = useState(null);
+  const [saved, setSaved] = useState(false);
+  const recognitionRef = useRef(null);
+
+  function toggleEcoute() {
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SR) { window.alert("La dictée vocale n'est pas prise en charge par ce navigateur. Tu peux quand même taper le texte."); return; }
+    if (ecoute) { recognitionRef.current?.stop(); return; }
+    const recognition = new SR();
+    recognition.lang = "fr-FR";
+    recognition.interimResults = false;
+    recognition.onresult = (e) => {
+      const transcript = e.results[0][0].transcript;
+      setTexte(prev => (prev ? prev + " " : "") + transcript);
+    };
+    recognition.onend = () => setEcoute(false);
+    recognition.onerror = () => setEcoute(false);
+    recognitionRef.current = recognition;
+    recognition.start();
+    setEcoute(true);
+  }
+
+  function analyser() {
+    if (!texte.trim()) return;
+    setResultat(analyserTexte(texte));
+    setSaved(false);
+  }
+
+  function enregistrer() {
+    if (!resultat || !resultat.montant) return;
+    if (resultat.type === "depense") {
+      addDepense({ date: resultat.date, fournisseur: resultat.nom, categorie: resultat.categorie, description: resultat.description, devise: resultat.devise, montant: resultat.montant });
+    } else {
+      addRecette({ date: resultat.date, client: resultat.nom, description: resultat.description, devise: resultat.devise, montant: resultat.montant, statut: "Reçu" });
+    }
+    setSaved(true);
+    setTexte("");
+    setResultat(null);
+  }
+
+  return (
+    <>
+      <div style={{ marginBottom: 22 }}>
+        <h1 style={{ fontSize: 22, margin: 0, fontWeight: 700, color: NAVY }}>💬 Assistant</h1>
+        <div style={{ fontSize: 12.5, color: "#6B6B63", marginTop: 3 }}>Explique une dépense ou une recette avec tes mots — l'assistant essaie de la reconnaître pour toi. Vérifie toujours avant d'enregistrer.</div>
+      </div>
+      <Panel title="Décris ce qui s'est passé">
+        <textarea
+          value={texte}
+          onChange={e => setTexte(e.target.value)}
+          placeholder="Ex : « J'ai payé 45 dollars pour l'électricité hier » ou « Le client Kevin a payé 120 dollars aujourd'hui »"
+          rows={4}
+          style={{ width: "100%", border: "1px solid #E4E1D8", borderRadius: 8, padding: 12, fontSize: 13.5, fontFamily: "inherit", resize: "vertical", boxSizing: "border-box" }}
+        />
+        <div style={{ display: "flex", gap: 10, marginTop: 12, flexWrap: "wrap" }}>
+          <button onClick={toggleEcoute} style={{ background: ecoute ? "#B4322B" : "#F0F0EE", color: ecoute ? "white" : "#1C1C1A", border: "none", padding: "9px 18px", borderRadius: 8, fontWeight: 700, cursor: "pointer", fontSize: 12.5 }}>
+            {ecoute ? "⏺ Écoute en cours… (clique pour arrêter)" : "🎙️ Parler au lieu d'écrire"}
+          </button>
+          <button onClick={analyser} disabled={!texte.trim()} style={{ background: GOLD, color: "white", border: "none", padding: "9px 18px", borderRadius: 8, fontWeight: 700, cursor: texte.trim() ? "pointer" : "not-allowed", fontSize: 12.5, opacity: texte.trim() ? 1 : .5 }}>
+            Analyser
+          </button>
+        </div>
+      </Panel>
+
+      {resultat && (
+        <Panel title="Vérifie et corrige avant d'enregistrer">
+          <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "flex-end" }}>
+            <Field label="Type">
+              <select value={resultat.type} onChange={e => setResultat({ ...resultat, type: e.target.value })} style={inputStyle}>
+                <option value="depense">Dépense (sortie d'argent)</option>
+                <option value="recette">Recette (entrée d'argent)</option>
+              </select>
+            </Field>
+            <Field label="Date"><input type="date" value={resultat.date} onChange={e => setResultat({ ...resultat, date: e.target.value })} style={inputStyle} /></Field>
+            <Field label={resultat.type === "depense" ? "Fournisseur" : "Client"}>
+              <input type="text" value={resultat.nom} onChange={e => setResultat({ ...resultat, nom: e.target.value })} placeholder="Nom (à vérifier)" style={{ ...inputStyle, width: 160 }} />
+            </Field>
+            {resultat.type === "depense" && (
+              <Field label="Catégorie">
+                <select value={resultat.categorie} onChange={e => setResultat({ ...resultat, categorie: e.target.value })} style={{ ...inputStyle, width: 180 }}>
+                  {CATEGORIES_DEPENSES.map(c => <option key={c}>{c}</option>)}
+                </select>
+              </Field>
+            )}
+            <Field label="Devise">
+              <select value={resultat.devise} onChange={e => setResultat({ ...resultat, devise: e.target.value })} style={inputStyle}>
+                <option>USD</option><option>EUR</option><option>CDF</option>
+              </select>
+            </Field>
+            <Field label="Montant"><input type="number" value={resultat.montant} onChange={e => setResultat({ ...resultat, montant: e.target.value })} style={{ ...inputStyle, width: 100 }} /></Field>
+          </div>
+          <div style={{ marginTop: 14 }}>
+            <button onClick={enregistrer} disabled={!resultat.montant} style={{ background: "#1E7A4C", color: "white", border: "none", padding: "10px 20px", borderRadius: 8, fontWeight: 700, cursor: resultat.montant ? "pointer" : "not-allowed", fontSize: 13, opacity: resultat.montant ? 1 : .5 }}>
+              ✓ Tout est bon, enregistrer
+            </button>
+          </div>
+        </Panel>
+      )}
+      {saved && <div style={{ marginTop: 14, padding: "12px 16px", background: "#E6F4EC", color: "#1E7A4C", borderRadius: 8, fontSize: 13, fontWeight: 600 }}>✓ Enregistré avec succès.</div>}
+    </>
+  );
+}
+
 function Sidebar({ page, setPage, onLock }) {
-  const items = [["dashboard", "Tableau de bord"], ["recettes", "Recettes"], ["depenses", "Dépenses"], ["salaires_rh", "Salaires"], ["campagnes", "Campagnes Clients"], ["recap_mensuel", "Récapitulatif mensuel"], ["tresorerie", "Trésorerie"], ["parametres", "Paramètres"]];
+  const items = [["dashboard", "Tableau de bord"], ["assistant", "💬 Assistant"], ["recettes", "Recettes"], ["depenses", "Dépenses"], ["salaires_rh", "Salaires"], ["campagnes", "Campagnes Clients"], ["recap_mensuel", "Récapitulatif mensuel"], ["tresorerie", "Trésorerie"], ["parametres", "Paramètres"]];
   return (
     <div className="askg-sidebar" style={{ width: 230, background: NAVY, color: "white", padding: "24px 0", flexShrink: 0 }}>
       <style>{RESPONSIVE_CSS}</style>
@@ -647,7 +814,7 @@ function RecettesPage({ recettes, addRecette, removeRecette, updateRecette, taux
 // PAGE : DÉPENSES
 // ============================================================
 function DepensesPage({ depenses, addDepense, removeDepense, updateDepense, taux }) {
-  const categories = ["Loyer & charges locaux", "Internet & téléphonie", "Logiciels CRM & VoIP", "Matériel informatique", "Électricité & eau", "Transport", "Fournitures de bureau", "Formation", "Frais bancaires", "Taxes & impôts", "Autres"];
+  const categories = CATEGORIES_DEPENSES;
   const emptyForm = { date: todayISO(), fournisseur: "", categorie: categories[0], description: "", devise: "USD", montant: "" };
   const [form, setForm] = useState(emptyForm);
   const [editingId, setEditingId] = useState(null);
@@ -997,8 +1164,8 @@ function StatutBadge({ value }) {
 }
 function EmptyState({ text }) { return <div style={{ textAlign: "center", padding: "30px 10px", color: "#999", fontSize: 13 }}>{text}</div>; }
 
-const inputStyle = { border: "1px solid #E4E1D8", borderRadius: 5, padding: "7px 9px", fontSize: 12, background: "#EAF1FF", color: "#1A4FB4", fontWeight: 600 };
+const inputStyle = { border: "1px solid #E4E1D8", borderRadius: 5, padding: "7px 9px", fontSize: 12, background: "#E7F2EC", color: "#0F3D2E", fontWeight: 600 };
 const loginInputStyle = { width: "100%", border: "1px solid #E4E1D8", borderRadius: 8, padding: "10px 12px", fontSize: 14, marginTop: 4 };
 const labelStyle = { display: "block", fontSize: 11, fontWeight: 600, color: "#6B6B63", marginBottom: 4 };
 const delBtnStyle = { background: "#FBE9E7", color: "#B4322B", border: "none", padding: "4px 9px", borderRadius: 6, fontSize: 10.5, fontWeight: 700, cursor: "pointer" };
-const editBtnStyle = { background: "#EAF1FF", color: "#1A4FB4", border: "none", padding: "4px 9px", borderRadius: 6, fontSize: 10.5, fontWeight: 700, cursor: "pointer" };
+const editBtnStyle = { background: "#E7F2EC", color: "#0F3D2E", border: "none", padding: "4px 9px", borderRadius: 6, fontSize: 10.5, fontWeight: 700, cursor: "pointer" };
