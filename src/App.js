@@ -36,6 +36,7 @@ function fmt(n, devise = "USD") {
 function convertToUSD(montant, devise, taux) {
   if (devise === "EUR") return montant * taux.eurUsd;
   if (devise === "CDF") return montant / taux.usdCdf;
+  if (devise === "DT") return montant * taux.dtUsd;
   return montant;
 }
 
@@ -54,8 +55,7 @@ export default function App() {
   const [loaded, setLoaded] = useState(false);
   const [recettes, setRecettes] = useState([]);
   const [depenses, setDepenses] = useState([]);
-  const [campagnes, setCampagnes] = useState([]);
-  const [taux, setTaux] = useState({ eurUsd: 1.08, usdCdf: 2800 });
+  const [taux, setTaux] = useState({ eurUsd: 1.08, usdCdf: 2800, dtUsd: 0.32 });
 
   // ─── Vérifier le mot de passe au démarrage ──────────────────
   useEffect(() => {
@@ -72,16 +72,14 @@ export default function App() {
   useEffect(() => {
     if (!unlocked) return;
     async function loadAll() {
-      const [r, d, c, t] = await Promise.all([
+      const [r, d, t] = await Promise.all([
         supabase.from("recettes").select("*"),
         supabase.from("depenses").select("*"),
-        supabase.from("campagnes").select("*"),
         supabase.from("taux_change").select("*").eq("id", "main").maybeSingle(),
       ]);
       if (r.data) setRecettes(r.data);
       if (d.data) setDepenses(d.data);
-      if (c.data) setCampagnes(c.data.map(x => ({ ...x, dateDebut: x.date_debut, dateFin: x.date_fin, resultatEstime: x.resultat_estime })));
-      if (t.data) setTaux({ eurUsd: t.data.eur_usd, usdCdf: t.data.usd_cdf });
+      if (t.data) setTaux({ eurUsd: t.data.eur_usd, usdCdf: t.data.usd_cdf, dtUsd: t.data.dt_usd || 0.32 });
       setLoaded(true);
     }
     loadAll();
@@ -113,7 +111,7 @@ export default function App() {
 
   async function updateTaux(newTaux) {
     setTaux(newTaux);
-    await supabase.from("taux_change").update({ eur_usd: newTaux.eurUsd, usd_cdf: newTaux.usdCdf }).eq("id", "main");
+    await supabase.from("taux_change").update({ eur_usd: newTaux.eurUsd, usd_cdf: newTaux.usdCdf, dt_usd: newTaux.dtUsd }).eq("id", "main");
   }
 
   // ─── Recettes ────────────────────────────────────────────────
@@ -146,21 +144,6 @@ export default function App() {
     const updated = { date: form.date, fournisseur: form.fournisseur, categorie: form.categorie, description: form.description, devise: form.devise, montant: parseFloat(form.montant) };
     setDepenses(prev => prev.map(d => d.id === id ? { ...d, ...updated } : d));
     await supabase.from("depenses").update(updated).eq("id", id);
-  }
-
-  // ─── Campagnes ───────────────────────────────────────────────
-  async function addCampagne(form) {
-    const newRow = { id: uid(), client: form.client, pays: form.pays, secteur: form.secteur, dateDebut: form.dateDebut, dateFin: form.dateFin, statut: form.statut, montant: parseFloat(form.montant) || 0, devise: form.devise, resultatEstime: parseFloat(form.resultatEstime) || 0 };
-    setCampagnes(prev => [...prev, newRow]);
-    await supabase.from("campagnes").insert({
-      id: newRow.id, client: newRow.client, pays: newRow.pays, secteur: newRow.secteur,
-      date_debut: newRow.dateDebut || null, date_fin: newRow.dateFin || null, statut: newRow.statut,
-      montant: newRow.montant, devise: newRow.devise, resultat_estime: newRow.resultatEstime,
-    });
-  }
-  async function removeCampagne(id) {
-    setCampagnes(prev => prev.filter(c => c.id !== id));
-    await supabase.from("campagnes").delete().eq("id", id);
   }
 
   // ─── Calculs dérivés ──────────────────────────────────────────
@@ -213,7 +196,6 @@ export default function App() {
         {page === "assistant" && <AssistantPage addDepense={addDepense} addRecette={addRecette} />}
         {page === "recettes" && <RecettesPage recettes={recettes} addRecette={addRecette} removeRecette={removeRecette} updateRecette={updateRecette} taux={taux} />}
         {page === "depenses" && <DepensesPage depenses={depenses} addDepense={addDepense} removeDepense={removeDepense} updateDepense={updateDepense} taux={taux} />}
-        {page === "campagnes" && <CampagnesPage campagnes={campagnes} addCampagne={addCampagne} removeCampagne={removeCampagne} taux={taux} />}
         {page === "recap_mensuel" && <RecapMensuelPage recapParMois={recapParMois} />}
         {page === "tresorerie" && <TresoreriePage recapParMois={recapParMois} />}
         {page === "parametres" && <ParametresPage onChangePassword={handleChangePassword} />}
@@ -230,7 +212,7 @@ function SetupPasswordScreen({ newPw, setNewPw, newPw2, setNewPw2, onSubmit, err
     <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: BG, fontFamily: "'Segoe UI', sans-serif", position: "relative", overflow: "hidden" }}>
       <style>{GLOBAL_CSS}</style>
       <BgGlow />
-      <div style={{ position: "relative", zIndex: 2, background: SURFACE, backdropFilter: "blur(20px)", border: `1px solid ${LINE}`, borderRadius: 16, padding: 36, width: 380, boxShadow: "0 20px 60px rgba(0,0,0,.5)" }}>
+      <div style={{ position: "relative", zIndex: 2, background: SURFACE, backdropFilter: "blur(20px)", border: `1px solid ${LINE}`, borderRadius: 16, padding: 36, width: 380, maxWidth: "90vw", boxShadow: "0 20px 60px rgba(0,0,0,.5)" }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 7, fontSize: 11, letterSpacing: 3, color: TEXT_MUTED, fontWeight: 700, textAlign: "center" }}>
           <span style={{ width: 7, height: 7, borderRadius: 99, background: RED, boxShadow: `0 0 10px ${RED}`, animation: "askgPulse 1.6s ease-in-out infinite" }} />
           ASK GROUP SARL
@@ -253,7 +235,7 @@ function LoginScreen({ pwInput, setPwInput, onSubmit, error }) {
     <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: BG, fontFamily: "'Segoe UI', sans-serif", position: "relative", overflow: "hidden" }}>
       <style>{GLOBAL_CSS}</style>
       <BgGlow />
-      <div style={{ position: "relative", zIndex: 2, background: SURFACE, backdropFilter: "blur(20px)", border: `1px solid ${LINE}`, borderRadius: 16, padding: 40, width: 380, boxShadow: "0 20px 60px rgba(0,0,0,.5)", textAlign: "center" }}>
+      <div style={{ position: "relative", zIndex: 2, background: SURFACE, backdropFilter: "blur(20px)", border: `1px solid ${LINE}`, borderRadius: 16, padding: 40, width: 380, maxWidth: "90vw", boxShadow: "0 20px 60px rgba(0,0,0,.5)", textAlign: "center" }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 7, fontSize: 11, letterSpacing: 3, color: TEXT_MUTED, fontWeight: 700 }}>
           <span style={{ width: 7, height: 7, borderRadius: 99, background: RED, boxShadow: `0 0 10px ${RED}`, animation: "askgPulse 1.6s ease-in-out infinite" }} />
           ASK GROUP SARL
@@ -322,6 +304,19 @@ const RESPONSIVE_CSS = `
   .askg-kpi-grid { grid-template-columns: repeat(2, 1fr) !important; gap: 8px !important; }
   table { font-size: 11px !important; }
   h1 { font-size: 18px !important; }
+  /* Empêche le zoom automatique d'iOS Safari sur les champs (nécessite 16px min) */
+  input, select, textarea { font-size: 16px !important; }
+  /* Les formulaires en ligne (Recettes, Dépenses...) s'empilent verticalement */
+  .askg-form-row { flex-direction: column !important; align-items: stretch !important; }
+  .askg-form-row > div { width: 100% !important; }
+  .askg-form-row input, .askg-form-row select { width: 100% !important; box-sizing: border-box !important; }
+  .askg-form-row button { width: 100% !important; margin-top: 4px; }
+  /* Panneaux collés aux bords de l'écran */
+  .askg-panel { padding: 14px !important; }
+}
+@media (max-width: 420px) {
+  table { font-size: 10px !important; }
+  .askg-kpi-grid { grid-template-columns: 1fr !important; }
 }
 `;
 
@@ -387,6 +382,7 @@ function analyserTexte(texteBrut) {
   let devise = "USD";
   if (/eur|€|euro/.test(texte)) devise = "EUR";
   else if (/cdf|fc\b|franc congolais|franc/.test(texte)) devise = "CDF";
+  else if (/dinar|\bdt\b|tnd/.test(texte)) devise = "DT";
   else if (/usd|\$|dollar/.test(texte)) devise = "USD";
 
   // --- Type : dépense ou recette (comptage de mots-clés, dépense par défaut si égalité) ---
@@ -500,7 +496,7 @@ function AssistantPage({ addDepense, addRecette }) {
 
       {resultat && (
         <Panel title="Vérifie et corrige avant d'enregistrer">
-          <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "flex-end" }}>
+          <div className="askg-form-row" style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "flex-end" }}>
             <Field label="Type">
               <select value={resultat.type} onChange={e => setResultat({ ...resultat, type: e.target.value })} style={inputStyle}>
                 <option value="depense">Dépense (sortie d'argent)</option>
@@ -520,7 +516,7 @@ function AssistantPage({ addDepense, addRecette }) {
             )}
             <Field label="Devise">
               <select value={resultat.devise} onChange={e => setResultat({ ...resultat, devise: e.target.value })} style={inputStyle}>
-                <option>USD</option><option>EUR</option><option>CDF</option>
+                <option>USD</option><option>EUR</option><option>CDF</option><option>DT</option>
               </select>
             </Field>
             <Field label="Montant"><input type="number" value={resultat.montant} onChange={e => setResultat({ ...resultat, montant: e.target.value })} style={{ ...inputStyle, width: 100 }} /></Field>
@@ -607,7 +603,7 @@ function BgGlow() {
 }
 
 function Sidebar({ page, setPage, onLock }) {
-  const items = [["dashboard", "Tableau de bord"], ["assistant", "💬 Parler à Nicole"], ["recettes", "Recettes"], ["depenses", "Dépenses"], ["campagnes", "Campagnes Clients"], ["recap_mensuel", "Récapitulatif mensuel"], ["tresorerie", "Trésorerie"], ["parametres", "Paramètres"]];
+  const items = [["dashboard", "Tableau de bord"], ["assistant", "💬 Parler à Nicole"], ["recettes", "Recettes"], ["depenses", "Dépenses"], ["recap_mensuel", "Récapitulatif mensuel"], ["tresorerie", "Trésorerie"], ["parametres", "Paramètres"]];
   return (
     <div className="askg-sidebar" style={{ width: 240, background: "rgba(14,21,34,.9)", backdropFilter: "blur(20px)", borderRight: `1px solid ${LINE}`, color: TEXT, padding: "26px 0", flexShrink: 0, position: "relative", zIndex: 2 }}>
       <style>{RESPONSIVE_CSS}</style>
@@ -648,7 +644,7 @@ function DashboardPage({ totalRecettesMois, totalDepensesMois, totalSalairesMois
         <h1 style={{ fontSize: 22, margin: 0, fontWeight: 700, color: TEXT }}>Tableau de bord financier</h1>
         <div style={{ fontSize: 12.5, color: "#8CA3C2", marginTop: 3 }}>ASK GROUP SARL · Devise de référence : USD</div>
       </div>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 14, marginBottom: 22 }}>
+      <div className="askg-kpi-grid" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 14, marginBottom: 22 }}>
         <Kpi label="Recettes du mois" value={fmt(totalRecettesMois)} color="#4CAF7D" />
         <Kpi label="Dépenses du mois" value={fmt(totalDepensesMois)} color="#E0656B" />
         <Kpi label="Salaires versés ce mois" value={fmt(totalSalairesMois)} color="#D4A72C" />
@@ -659,8 +655,9 @@ function DashboardPage({ totalRecettesMois, totalDepensesMois, totalSalairesMois
         <div style={{ display: "flex", gap: 24, flexWrap: "wrap" }}>
           <div><label style={labelStyle}>1 EUR =</label><div style={{ display: "flex", alignItems: "center", gap: 6 }}><input type="number" step="0.01" value={taux.eurUsd} onChange={e => setTaux({ ...taux, eurUsd: parseFloat(e.target.value) || 0 })} style={{ ...inputStyle, width: 90 }} /><span style={{ fontSize: 12, color: "#8CA3C2" }}>USD</span></div></div>
           <div><label style={labelStyle}>1 USD =</label><div style={{ display: "flex", alignItems: "center", gap: 6 }}><input type="number" value={taux.usdCdf} onChange={e => setTaux({ ...taux, usdCdf: parseFloat(e.target.value) || 0 })} style={{ ...inputStyle, width: 90 }} /><span style={{ fontSize: 12, color: "#8CA3C2" }}>CDF</span></div></div>
+          <div><label style={labelStyle}>1 DT =</label><div style={{ display: "flex", alignItems: "center", gap: 6 }}><input type="number" step="0.001" value={taux.dtUsd} onChange={e => setTaux({ ...taux, dtUsd: parseFloat(e.target.value) || 0 })} style={{ ...inputStyle, width: 90 }} /><span style={{ fontSize: 12, color: "#8CA3C2" }}>USD</span></div></div>
         </div>
-        <div style={{ fontSize: 11, color: "#8CA3C2", marginTop: 10 }}>💡 Ces taux servent à convertir automatiquement les recettes/dépenses/campagnes saisies en EUR ou CDF vers l'USD partout dans le logiciel.</div>
+        <div style={{ fontSize: 11, color: "#8CA3C2", marginTop: 10 }}>💡 Ces taux servent à convertir automatiquement les recettes/dépenses saisies en EUR, CDF ou DT vers l'USD partout dans le logiciel.</div>
       </Panel>
       <Panel title="Dernières recettes enregistrées">
         {recentRecettes.length === 0 ? <EmptyState text="Aucune recette enregistrée encore." /> : (
@@ -699,11 +696,11 @@ function RecettesPage({ recettes, addRecette, removeRecette, updateRecette, taux
     <>
       <div style={{ marginBottom: 22 }}><h1 style={{ fontSize: 22, margin: 0, fontWeight: 700, color: TEXT }}>Recettes</h1><div style={{ fontSize: 12.5, color: "#8CA3C2", marginTop: 3 }}>Enregistre chaque paiement reçu</div></div>
       <Panel title={editingId ? "Modifier la recette" : "Ajouter une recette"}>
-        <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "flex-end" }}>
+        <div className="askg-form-row" style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "flex-end" }}>
           <Field label="Date"><input type="date" value={form.date} onChange={e => setForm({ ...form, date: e.target.value })} style={inputStyle} /></Field>
           <Field label="Client"><input type="text" value={form.client} onChange={e => setForm({ ...form, client: e.target.value })} placeholder="Nom du client" style={{ ...inputStyle, width: 160 }} /></Field>
           <Field label="Description"><input type="text" value={form.description} onChange={e => setForm({ ...form, description: e.target.value })} placeholder="Détail" style={{ ...inputStyle, width: 180 }} /></Field>
-          <Field label="Devise"><select value={form.devise} onChange={e => setForm({ ...form, devise: e.target.value })} style={inputStyle}><option>USD</option><option>EUR</option><option>CDF</option></select></Field>
+          <Field label="Devise"><select value={form.devise} onChange={e => setForm({ ...form, devise: e.target.value })} style={inputStyle}><option>USD</option><option>EUR</option><option>CDF</option><option>DT</option></select></Field>
           <Field label="Montant"><input type="number" value={form.montant} onChange={e => setForm({ ...form, montant: e.target.value })} placeholder="0.00" style={{ ...inputStyle, width: 100 }} /></Field>
           <Field label="Statut"><select value={form.statut} onChange={e => setForm({ ...form, statut: e.target.value })} style={inputStyle}><option>Reçu</option><option>En attente</option><option>Partiel</option><option>Annulé</option></select></Field>
           <button onClick={submit} style={{ background: GOLD, color: TEXT, border: "none", padding: "9px 18px", borderRadius: 8, fontWeight: 700, cursor: "pointer", fontSize: 12 }}>{editingId ? "Enregistrer" : "+ Ajouter"}</button>
@@ -748,12 +745,12 @@ function DepensesPage({ depenses, addDepense, removeDepense, updateDepense, taux
     <>
       <div style={{ marginBottom: 22 }}><h1 style={{ fontSize: 22, margin: 0, fontWeight: 700, color: TEXT }}>Dépenses</h1><div style={{ fontSize: 12.5, color: "#8CA3C2", marginTop: 3 }}>Enregistre chaque dépense de la société</div></div>
       <Panel title={editingId ? "Modifier la dépense" : "Ajouter une dépense"}>
-        <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "flex-end" }}>
+        <div className="askg-form-row" style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "flex-end" }}>
           <Field label="Date"><input type="date" value={form.date} onChange={e => setForm({ ...form, date: e.target.value })} style={inputStyle} /></Field>
           <Field label="Fournisseur"><input type="text" value={form.fournisseur} onChange={e => setForm({ ...form, fournisseur: e.target.value })} placeholder="Nom" style={{ ...inputStyle, width: 160 }} /></Field>
           <Field label="Catégorie"><select value={form.categorie} onChange={e => setForm({ ...form, categorie: e.target.value })} style={{ ...inputStyle, width: 180 }}>{categories.map(c => <option key={c}>{c}</option>)}</select></Field>
           <Field label="Description"><input type="text" value={form.description} onChange={e => setForm({ ...form, description: e.target.value })} placeholder="Détail" style={{ ...inputStyle, width: 160 }} /></Field>
-          <Field label="Devise"><select value={form.devise} onChange={e => setForm({ ...form, devise: e.target.value })} style={inputStyle}><option>USD</option><option>EUR</option><option>CDF</option></select></Field>
+          <Field label="Devise"><select value={form.devise} onChange={e => setForm({ ...form, devise: e.target.value })} style={inputStyle}><option>USD</option><option>EUR</option><option>CDF</option><option>DT</option></select></Field>
           <Field label="Montant"><input type="number" value={form.montant} onChange={e => setForm({ ...form, montant: e.target.value })} placeholder="0.00" style={{ ...inputStyle, width: 100 }} /></Field>
           <button onClick={submit} style={{ background: GOLD, color: TEXT, border: "none", padding: "9px 18px", borderRadius: 8, fontWeight: 700, cursor: "pointer", fontSize: 12 }}>{editingId ? "Enregistrer" : "+ Ajouter"}</button>
           {editingId && <button onClick={cancelEdit} style={{ background: "rgba(255,255,255,.08)", color: "#8CA3C2", border: "none", padding: "9px 18px", borderRadius: 8, fontWeight: 700, cursor: "pointer", fontSize: 12 }}>Annuler</button>}
@@ -765,43 +762,6 @@ function DepensesPage({ depenses, addDepense, removeDepense, updateDepense, taux
             <thead><tr><Th>Date</Th><Th>Fournisseur</Th><Th>Catégorie</Th><Th>Description</Th><Th>Montant</Th><Th>USD</Th><Th></Th></tr></thead>
             <tbody>{[...depenses].sort((a, b) => b.date.localeCompare(a.date)).map(d => (<tr key={d.id}><Td>{new Date(d.date).toLocaleDateString("fr-FR")}</Td><Td><b>{d.fournisseur}</b></Td><Td>{d.categorie}</Td><Td>{d.description}</Td><Td>{d.montant} {d.devise}</Td><Td><b style={{ color: "#E0656B" }}>{fmt(convertToUSD(d.montant, d.devise, taux))}</b></Td><Td><div style={{ display: "flex", gap: 6 }}><button onClick={() => startEdit(d)} style={editBtnStyle}>Modifier</button><button onClick={() => removeDepense(d.id)} style={delBtnStyle}>Suppr.</button></div></Td></tr>))}</tbody>
           </table>
-        )}
-      </Panel>
-    </>
-  );
-}
-
-// ============================================================
-// PAGE : CAMPAGNES CLIENTS
-// ============================================================
-function CampagnesPage({ campagnes, addCampagne, removeCampagne, taux }) {
-  const [form, setForm] = useState({ client: "", pays: "", secteur: "", dateDebut: todayISO(), dateFin: "", statut: "En cours", montant: "", devise: "USD", resultatEstime: "" });
-  function submit() { if (!form.client) return; addCampagne(form); setForm({ client: "", pays: "", secteur: "", dateDebut: todayISO(), dateFin: "", statut: "En cours", montant: "", devise: "USD", resultatEstime: "" }); }
-  return (
-    <>
-      <div style={{ marginBottom: 22 }}><h1 style={{ fontSize: 22, margin: 0, fontWeight: 700, color: TEXT }}>Campagnes Clients</h1><div style={{ fontSize: 12.5, color: "#8CA3C2", marginTop: 3 }}>Suivi commercial par client</div></div>
-      <Panel title="Ajouter une campagne">
-        <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "flex-end" }}>
-          <Field label="Client"><input type="text" value={form.client} onChange={e => setForm({ ...form, client: e.target.value })} style={{ ...inputStyle, width: 160 }} /></Field>
-          <Field label="Pays"><input type="text" value={form.pays} onChange={e => setForm({ ...form, pays: e.target.value })} style={{ ...inputStyle, width: 110 }} /></Field>
-          <Field label="Secteur"><input type="text" value={form.secteur} onChange={e => setForm({ ...form, secteur: e.target.value })} style={{ ...inputStyle, width: 140 }} /></Field>
-          <Field label="Début"><input type="date" value={form.dateDebut} onChange={e => setForm({ ...form, dateDebut: e.target.value })} style={inputStyle} /></Field>
-          <Field label="Fin"><input type="date" value={form.dateFin} onChange={e => setForm({ ...form, dateFin: e.target.value })} style={inputStyle} /></Field>
-          <Field label="Statut"><select value={form.statut} onChange={e => setForm({ ...form, statut: e.target.value })} style={inputStyle}><option>En cours</option><option>Terminé</option><option>Suspendu</option></select></Field>
-          <Field label="Montant facturé"><input type="number" value={form.montant} onChange={e => setForm({ ...form, montant: e.target.value })} style={{ ...inputStyle, width: 110 }} /></Field>
-          <Field label="Devise"><select value={form.devise} onChange={e => setForm({ ...form, devise: e.target.value })} style={inputStyle}><option>USD</option><option>EUR</option><option>CDF</option></select></Field>
-          <Field label="Résultat estimé USD"><input type="number" value={form.resultatEstime} onChange={e => setForm({ ...form, resultatEstime: e.target.value })} style={{ ...inputStyle, width: 130 }} /></Field>
-          <button onClick={submit} style={{ background: GOLD, color: TEXT, border: "none", padding: "9px 18px", borderRadius: 8, fontWeight: 700, cursor: "pointer", fontSize: 12 }}>+ Ajouter</button>
-        </div>
-      </Panel>
-      <Panel title="Toutes les campagnes">
-        {campagnes.length === 0 ? <EmptyState text="Aucune campagne enregistrée." /> : (
-          <div style={{ overflowX: "auto" }}>
-            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
-              <thead><tr><Th>Client</Th><Th>Pays</Th><Th>Secteur</Th><Th>Période</Th><Th>Statut</Th><Th>Montant</Th><Th>USD</Th><Th>Résultat est.</Th><Th></Th></tr></thead>
-              <tbody>{campagnes.map(c => (<tr key={c.id}><Td><b>{c.client}</b></Td><Td>{c.pays}</Td><Td>{c.secteur}</Td><Td>{c.dateDebut && new Date(c.dateDebut).toLocaleDateString("fr-FR")} {c.dateFin && "→ " + new Date(c.dateFin).toLocaleDateString("fr-FR")}</Td><Td><StatutBadge value={c.statut} /></Td><Td>{c.montant} {c.devise}</Td><Td><b style={{ color: "#4CAF7D" }}>{fmt(convertToUSD(c.montant, c.devise, taux))}</b></Td><Td>{fmt(c.resultatEstime)}</Td><Td><button onClick={() => removeCampagne(c.id)} style={delBtnStyle}>Suppr.</button></Td></tr>))}</tbody>
-            </table>
-          </div>
         )}
       </Panel>
     </>
@@ -877,7 +837,7 @@ function TresoreriePage({ recapParMois }) {
         <div style={{ fontSize: 12.5, color: "#8CA3C2", marginTop: 3 }}>Solde réel dans la caisse, tous mois confondus (recettes − dépenses − salaires versés)</div>
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 14, marginBottom: 22 }}>
+      <div className="askg-kpi-grid" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 14, marginBottom: 22 }}>
         <Kpi label="Solde de trésorerie actuel" value={fmt(soldeActuel)} color={soldeActuel >= 0 ? "#4CAF7D" : "#E0656B"} />
         <Kpi label="Total entrées (toutes recettes)" value={fmt(totalEntrees)} color="#4CAF7D" />
         <Kpi label="Total sorties (dépenses + salaires)" value={fmt(totalSorties)} color="#E0656B" />
@@ -952,7 +912,7 @@ function ParametresPage({ onChangePassword }) {
 // COMPOSANTS UTILITAIRES
 // ============================================================
 function Panel({ title, children }) {
-  return (<div style={{ background: SURFACE, border: "1px solid rgba(255,255,255,.1)", borderRadius: 12, marginBottom: 20, overflow: "hidden" }}><div style={{ padding: "16px 20px", borderBottom: "1px solid rgba(255,255,255,.1)" }}><h2 style={{ fontSize: 14.5, margin: 0, fontWeight: 700, color: TEXT }}>{title}</h2></div><div style={{ padding: 18 }}>{children}</div></div>);
+  return (<div className="askg-panel" style={{ background: SURFACE, border: "1px solid rgba(255,255,255,.1)", borderRadius: 12, marginBottom: 20, overflow: "hidden" }}><div style={{ padding: "16px 20px", borderBottom: "1px solid rgba(255,255,255,.1)" }}><h2 style={{ fontSize: 14.5, margin: 0, fontWeight: 700, color: TEXT }}>{title}</h2></div><div style={{ padding: 18 }}>{children}</div></div>);
 }
 function Kpi({ label, value, color }) {
   return (<div style={{ background: SURFACE, border: "1px solid rgba(255,255,255,.1)", borderRadius: 12, padding: "14px 16px" }}><div style={{ fontSize: 10, color: "#8CA3C2", textTransform: "uppercase", fontWeight: 600 }}>{label}</div><div style={{ fontSize: 19, fontWeight: 700, marginTop: 4, color: color || TEXT }}>{value}</div></div>);
