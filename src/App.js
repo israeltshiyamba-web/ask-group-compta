@@ -506,9 +506,9 @@ function SetupPasswordScreen({ newPw, setNewPw, newPw2, setNewPw2, onSubmit, err
         <h1 style={{ fontSize: 20, textAlign: "center", color: TEXT, margin: "8px 0 4px" }}>Nicole — Première utilisation</h1>
         <p style={{ fontSize: 12.5, color: TEXT_MUTED, textAlign: "center", marginBottom: 24 }}>Crée ton mot de passe. Tu seras le seul à le connaître.</p>
         <label style={labelStyle}>Nouveau mot de passe</label>
-        <input type="password" value={newPw} onChange={e => setNewPw(e.target.value)} style={loginInputStyle} placeholder="Au moins 4 caractères" />
+        <PasswordInput value={newPw} onChange={e => setNewPw(e.target.value)} style={loginInputStyle} placeholder="Au moins 4 caractères" />
         <label style={{ ...labelStyle, marginTop: 12 }}>Confirme le mot de passe</label>
-        <input type="password" value={newPw2} onChange={e => setNewPw2(e.target.value)} style={loginInputStyle} placeholder="Retape le mot de passe" />
+        <PasswordInput value={newPw2} onChange={e => setNewPw2(e.target.value)} style={loginInputStyle} placeholder="Retape le mot de passe" />
         {error && <div style={{ color: "#E0656B", fontSize: 12, marginTop: 8 }}>{error}</div>}
         <button className="askg-btn" onClick={(e) => { ripple(e); onSubmit(); }} style={{ width: "100%", background: `linear-gradient(135deg, ${RED}, #A31D14)`, color: "white", border: "none", padding: "12px", borderRadius: 8, fontWeight: 700, fontSize: 14, marginTop: 18, cursor: "pointer", position: "relative", overflow: "hidden" }}>Créer mon mot de passe</button>
       </div>
@@ -529,7 +529,7 @@ function LoginScreen({ pwInput, setPwInput, onSubmit, error }) {
         <h1 style={{ fontSize: 32, fontWeight: 800, margin: "10px 0 4px", fontFamily: "'Georgia', serif", background: `linear-gradient(120deg, ${RED}, ${RED_LIGHT})`, WebkitBackgroundClip: "text", backgroundClip: "text", color: "transparent" }}>Nicole</h1>
         <p style={{ fontSize: 12.5, color: TEXT_MUTED, marginBottom: 24, fontStyle: "italic" }}>« Bonsoir. Que dois-je noter aujourd'hui ? »</p>
         <label style={labelStyle}>Mot de passe</label>
-        <input type="password" value={pwInput} onChange={e => setPwInput(e.target.value)} onKeyDown={e => e.key === "Enter" && onSubmit()} style={loginInputStyle} placeholder="Saisis ton mot de passe" autoFocus />
+        <PasswordInput value={pwInput} onChange={e => setPwInput(e.target.value)} onKeyDown={e => e.key === "Enter" && onSubmit()} style={loginInputStyle} placeholder="Saisis ton mot de passe" autoFocus />
         {error && <div style={{ color: "#E0656B", fontSize: 12, marginTop: 8 }}>{error}</div>}
         <button className="askg-btn" onClick={(e) => { ripple(e); onSubmit(); }} style={{ width: "100%", background: `linear-gradient(135deg, ${RED}, #A31D14)`, color: "white", border: "none", padding: "12px", borderRadius: 8, fontWeight: 700, fontSize: 14, marginTop: 18, cursor: "pointer", position: "relative", overflow: "hidden" }}>Parler à Nicole</button>
         <div style={{ textAlign: "center", fontSize: 11, color: TEXT_MUTED, marginTop: 16 }}>Accès strictement réservé à la Direction</div>
@@ -776,6 +776,30 @@ const GLOBAL_CSS = `
 .askg-panel:hover { border-color:rgba(214,43,31,.3) !important; }
 .askg-tab:hover { opacity:.85 !important; }
 `;
+
+// Champ mot de passe avec bouton voir/cacher (👁), comme sur Kate
+function PasswordInput({ value, onChange, style, placeholder, onKeyDown, autoFocus }) {
+  const [visible, setVisible] = useState(false);
+  return (
+    <div style={{ position: "relative" }}>
+      <input
+        type={visible ? "text" : "password"}
+        value={value}
+        onChange={onChange}
+        onKeyDown={onKeyDown}
+        autoFocus={autoFocus}
+        placeholder={placeholder}
+        style={{ ...style, paddingRight: 38, boxSizing: "border-box", width: style?.width || "100%" }}
+      />
+      <button
+        type="button"
+        onClick={() => setVisible(v => !v)}
+        style={{ position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", cursor: "pointer", fontSize: 15, padding: 4, color: TEXT_MUTED, lineHeight: 1 }}
+        tabIndex={-1}
+      >{visible ? "🙈" : "👁"}</button>
+    </div>
+  );
+}
 
 function ripple(e) {
   const btn = e.currentTarget;
@@ -1245,11 +1269,11 @@ function ParametresPage({ onChangePassword }) {
       <Panel title="Changer le mot de passe">
         <div style={{ maxWidth: 320 }}>
           <label style={labelStyle}>Mot de passe actuel</label>
-          <input type="password" value={oldPw} onChange={e => setOldPw(e.target.value)} style={{ ...inputStyle, width: "100%", marginBottom: 10, background: SURFACE, color: "#E7ECF5" }} />
+          <PasswordInput value={oldPw} onChange={e => setOldPw(e.target.value)} style={{ ...inputStyle, width: "100%", marginBottom: 10, background: SURFACE, color: "#E7ECF5" }} />
           <label style={labelStyle}>Nouveau mot de passe</label>
-          <input type="password" value={newPw} onChange={e => setNewPw(e.target.value)} style={{ ...inputStyle, width: "100%", marginBottom: 10, background: SURFACE, color: "#E7ECF5" }} />
+          <PasswordInput value={newPw} onChange={e => setNewPw(e.target.value)} style={{ ...inputStyle, width: "100%", marginBottom: 10, background: SURFACE, color: "#E7ECF5" }} />
           <label style={labelStyle}>Confirme le nouveau mot de passe</label>
-          <input type="password" value={newPw2} onChange={e => setNewPw2(e.target.value)} style={{ ...inputStyle, width: "100%", marginBottom: 14, background: SURFACE, color: "#E7ECF5" }} />
+          <PasswordInput value={newPw2} onChange={e => setNewPw2(e.target.value)} style={{ ...inputStyle, width: "100%", marginBottom: 14, background: SURFACE, color: "#E7ECF5" }} />
           {msg && <div style={{ fontSize: 12, color: msg.startsWith("✓") ? "#4CAF7D" : "#E0656B", marginBottom: 10 }}>{msg}</div>}
           <button onClick={submit} style={{ background: NAVY, color: "white", border: "none", padding: "10px 20px", borderRadius: 8, fontWeight: 700, cursor: "pointer", fontSize: 12 }}>Modifier le mot de passe</button>
         </div>
