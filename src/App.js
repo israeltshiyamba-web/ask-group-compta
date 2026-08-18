@@ -21,7 +21,7 @@ const GOLD = RED;                // alias — l'ancien nom "GOLD" désigne maint
 const TEXT = "#E7ECF5";          // texte principal sur fond sombre
 const TEXT_MUTED = "#8CA3C2";    // texte secondaire
 const LINE = "rgba(255,255,255,.1)"; // bordures discrètes
-const CATEGORIES_DEPENSES = ["Loyer & charges locaux", "Internet & téléphonie", "Logiciels CRM & VoIP", "Matériel informatique", "Électricité & eau", "Transport", "Fournitures de bureau", "Formation", "Frais bancaires", "Taxes & impôts", "Autres"];
+const CATEGORIES_DEPENSES = ["Salaires", "Loyer & charges locaux", "Internet & téléphonie", "Logiciels CRM & VoIP", "Matériel informatique", "Électricité & eau", "Transport", "Fournitures de bureau", "Formation", "Frais bancaires", "Taxes & impôts", "Autres"];
 const APP_NAME = "comptabilite";
 
 function uid() { return Math.random().toString(36).slice(2, 10); }
@@ -37,247 +37,6 @@ function convertToUSD(montant, devise, taux) {
   if (devise === "EUR") return montant * taux.eurUsd;
   if (devise === "CDF") return montant / taux.usdCdf;
   return montant;
-}
-
-// ============================================================
-// LOGIQUE DE CALCUL DU SALAIRE — REPRISE DU LOGICIEL SUIVI RH
-// (Lecture seule ici : Compta ne fait que LIRE les tables partagées
-// agents / pointages / month_params — jamais les modifier)
-// ============================================================
-const DT_TO_USD_DEFAULT = 0.32;
-const HEURE_DEBUT_RH = "09:00";
-const HEURE_FIN_RH = "17:00";
-const HEURES_JOUR_RH = 8;
-
-function joursOuvrablesRH(year, month) {
-  let count = 0;
-  const date = new Date(year, month - 1, 1);
-  while (date.getMonth() === month - 1) {
-    const day = date.getDay();
-    if (day !== 0 && day !== 6) count++;
-    date.setDate(date.getDate() + 1);
-  }
-  return count;
-}
-
-function timeToMinutesRH(t) {
-  if (!t) return null;
-  const [h, m] = t.split(":").map(Number);
-  return h * 60 + m;
-}
-
-const FERIES_FRANCE_FIXES_RH = [
-  { date: "01-01", nom: "Nouvel An 🇫🇷" },
-  { date: "05-01", nom: "Fête du Travail 🇫🇷" },
-  { date: "05-08", nom: "Victoire 1945 🇫🇷" },
-  { date: "07-14", nom: "Fête Nationale 🇫🇷" },
-  { date: "08-15", nom: "Assomption 🇫🇷" },
-  { date: "11-01", nom: "Toussaint 🇫🇷" },
-  { date: "11-11", nom: "Armistice 🇫🇷" },
-  { date: "12-25", nom: "Noël 🇫🇷" },
-];
-
-function calculerPaquesEtFeriesRH(year) {
-  const a = year % 19;
-  const b = Math.floor(year / 100);
-  const c = year % 100;
-  const d = Math.floor(b / 4);
-  const e = b % 4;
-  const f = Math.floor((b + 8) / 25);
-  const g = Math.floor((b - f + 1) / 3);
-  const h = (19 * a + b - d - g + 15) % 30;
-  const i = Math.floor(c / 4);
-  const k = c % 4;
-  const l = (32 + 2 * e + 2 * i - h - k) % 7;
-  const m = Math.floor((a + 11 * h + 22 * l) / 451);
-  const month = Math.floor((h + l - 7 * m + 114) / 31);
-  const day = ((h + l - 7 * m + 114) % 31) + 1;
-  const paques = new Date(year, month - 1, day);
-  const fmtd = (d2) => {
-    const mm = String(d2.getMonth() + 1).padStart(2, "0");
-    const dd = String(d2.getDate()).padStart(2, "0");
-    return `${mm}-${dd}`;
-  };
-  const addDays = (d2, n) => new Date(d2.getFullYear(), d2.getMonth(), d2.getDate() + n);
-  return [
-    { date: fmtd(addDays(paques, 1)), nom: "Lundi de Pâques 🇫🇷" },
-    { date: fmtd(addDays(paques, 39)), nom: "Ascension 🇫🇷" },
-    { date: fmtd(addDays(paques, 50)), nom: "Lundi de Pentecôte 🇫🇷" },
-  ];
-}
-
-const FERIES_RDC_FIXES_RH = [
-  { date: "01-01", nom: "Nouvel An 🇨🇩" },
-  { date: "01-04", nom: "Martyrs de l'Indépendance 🇨🇩" },
-  { date: "01-16", nom: "Héros National L.D. Kabila 🇨🇩" },
-  { date: "01-17", nom: "Héros National P.E. Lumumba 🇨🇩" },
-  { date: "04-06", nom: "Simon Kimbangu & Conscience Africaine 🇨🇩" },
-  { date: "05-01", nom: "Fête du Travail 🇨🇩" },
-  { date: "05-17", nom: "Journée des Forces Armées 🇨🇩" },
-  { date: "06-30", nom: "Fête de l'Indépendance 🇨🇩" },
-  { date: "08-01", nom: "Fête des Parents 🇨🇩" },
-  { date: "12-25", nom: "Noël 🇨🇩" },
-];
-
-const FERIES_TN_FIXES_RH = [
-  { date: "01-01", nom: "Nouvel An 🇹🇳" },
-  { date: "01-14", nom: "Révolution et Jeunesse 🇹🇳" },
-  { date: "03-20", nom: "Fête de l'Indépendance 🇹🇳" },
-  { date: "04-09", nom: "Journée des Martyrs 🇹🇳" },
-  { date: "05-01", nom: "Fête du Travail 🇹🇳" },
-  { date: "07-25", nom: "Fête de la République 🇹🇳" },
-  { date: "08-13", nom: "Journée de la Femme 🇹🇳" },
-  { date: "10-15", nom: "Journée de l'Évacuation 🇹🇳" },
-];
-
-function getFerieInfoRH(dateISO, localisation) {
-  // Un weekend n'est jamais un jour férié payé — il n'est de toute façon jamais travaillé/payé
-  const jourSemaine = new Date(dateISO + "T00:00:00").getDay();
-  if (jourSemaine === 0 || jourSemaine === 6) return { isFerie: false };
-  const year = parseInt(dateISO.slice(0, 4));
-  const mmdd = dateISO.slice(5);
-  const feriesFrance = [...FERIES_FRANCE_FIXES_RH, ...calculerPaquesEtFeriesRH(year)];
-  const matchFrance = feriesFrance.find(f => f.date === mmdd);
-  if (matchFrance) return { isFerie: true };
-  if (localisation === "RDC") {
-    const match = FERIES_RDC_FIXES_RH.find(f => f.date === mmdd);
-    if (match) return { isFerie: true };
-  }
-  if (localisation === "TN") {
-    const match = FERIES_TN_FIXES_RH.find(f => f.date === mmdd);
-    if (match) return { isFerie: true };
-  }
-  return { isFerie: false };
-}
-
-function calculDuJourRH(agent, pointagesAgent, monthParamsAgent, date) {
-  const localisation = agent ? (agent.localisation || "RDC") : "RDC";
-  const ferieInfo = getFerieInfoRH(date, localisation);
-  const p = pointagesAgent.find(pt => pt.date === date);
-  const mp = monthParamsAgent;
-  const [year, month] = date.split("-").map(Number);
-  const jOuvrables = joursOuvrablesRH(year, month);
-  const fixeJournalier = (mp.salaireFixe || 0) / jOuvrables;
-
-  if (ferieInfo.isFerie) return { montantJour: fixeJournalier, estFerie: true, minutesManquantes: 0 };
-  if (!p || p.statut === "absent") return { montantJour: 0, estFerie: false, minutesManquantes: HEURES_JOUR_RH * 60, estAbsentNJ: p && p.statut === "absent" && !p.justifie };
-
-  const arriveeMin = timeToMinutesRH(p.heureArrivee);
-  const departMin = timeToMinutesRH(p.heureDepart);
-  if (!arriveeMin && !departMin) return { montantJour: fixeJournalier, estFerie: false, minutesManquantes: 0 };
-
-  let minutesTravaillees = 0;
-  if (arriveeMin && departMin) {
-    minutesTravaillees = Math.max(0, departMin - arriveeMin);
-  } else if (arriveeMin && !departMin) {
-    const debutMin = timeToMinutesRH(HEURE_DEBUT_RH);
-    const retard = Math.max(0, arriveeMin - debutMin);
-    minutesTravaillees = (HEURES_JOUR_RH * 60) - retard;
-  } else if (!arriveeMin && departMin) {
-    const finMin = timeToMinutesRH(HEURE_FIN_RH);
-    const departAnticipe = Math.max(0, finMin - departMin);
-    minutesTravaillees = (HEURES_JOUR_RH * 60) - departAnticipe;
-  }
-  const minutesManquantes = Math.max(0, (HEURES_JOUR_RH * 60) - minutesTravaillees);
-  const tauxMin = fixeJournalier / (HEURES_JOUR_RH * 60);
-  const deductionRetard = minutesManquantes * tauxMin;
-  const montantJour = Math.max(0, fixeJournalier - deductionRetard);
-  return { montantJour, estFerie: false, minutesManquantes, minutesTravaillees };
-}
-
-// Formate un total de minutes en "Xj Yh Zmin" (24h = 1 jour) — identique au Suivi RH
-function formatRetard(totalMin) {
-  const t = Math.round(totalMin || 0);
-  if (t <= 0) return "0 min";
-  const jours = Math.floor(t / 1440);
-  const resteApresJours = t % 1440;
-  const heures = Math.floor(resteApresJours / 60);
-  const minutes = resteApresJours % 60;
-  const parts = [];
-  if (jours > 0) parts.push(`${jours}j`);
-  if (heures > 0) parts.push(`${heures}h`);
-  if (minutes > 0 || parts.length === 0) parts.push(`${minutes}min`);
-  return parts.join(" ");
-}
-
-// Récap NET agent RDC (USD) — reprend exactement la règle du RH :
-// prime d'assiduité annulée si 2 absences (justifiées ou non) ou plus
-function calcNetRDC_RH(agent, pointages, monthParams, mk) {
-  const pts = pointages.filter(p => p.agentId === agent.id && monthKey(p.date) === mk);
-  const mp = monthParams.find(m => m.agentId === agent.id && m.mois === mk) || { salaireFixe: 0, primeAssiduite: 0, primePerformance: 0 };
-  const [year, month] = mk.split("-").map(Number);
-  const lastDay = new Date(year, month, 0).getDate();
-  let totalFixe = 0, joursA = 0;
-  for (let d = 1; d <= lastDay; d++) {
-    const dateISO = `${mk}-${String(d).padStart(2, "0")}`;
-    const c = calculDuJourRH(agent, pts, mp, dateISO);
-    if (c.estFerie) { totalFixe += c.montantJour; continue; }
-    const p = pts.find(pt => pt.date === dateISO);
-    if (!p) continue;
-    totalFixe += c.montantJour;
-    if (p.statut === "absent") joursA++;
-  }
-  const primeAss = joursA >= 2 ? 0 : (mp.primeAssiduite || 0);
-  const primePerf = mp.primePerformance || 0;
-  return totalFixe + primeAss + primePerf;
-}
-
-// Détails complémentaires agent RDC pour l'affichage (jours travaillés, jours d'absence, retard cumulé)
-function calcDetailsRDC_RH(agent, pointages, monthParams, mk) {
-  const pts = pointages.filter(p => p.agentId === agent.id && monthKey(p.date) === mk);
-  const mp = monthParams.find(m => m.agentId === agent.id && m.mois === mk) || { salaireFixe: 0, primeAssiduite: 0, primePerformance: 0 };
-  const [year, month] = mk.split("-").map(Number);
-  const lastDay = new Date(year, month, 0).getDate();
-  let joursP = 0, joursA = 0, retardTotal = 0, tempsTravailleTotal = 0;
-  for (let d = 1; d <= lastDay; d++) {
-    const dateISO = `${mk}-${String(d).padStart(2, "0")}`;
-    const c = calculDuJourRH(agent, pts, mp, dateISO);
-    if (c.estFerie) continue;
-    const p = pts.find(pt => pt.date === dateISO);
-    if (!p) continue;
-    if (p.statut === "absent") {
-      joursA++;
-    } else {
-      joursP++;
-      retardTotal += (c.minutesManquantes || 0);
-      tempsTravailleTotal += (c.minutesTravaillees || 0);
-    }
-  }
-  return { joursP, joursA, retardTotal, tempsTravailleTotal };
-}
-
-// Récap NET agent Tunisie (DT + équivalent USD) + détails jours/retard
-function calcNetTN_RH(agent, pointages, monthParams, mk, dtToUsd) {
-  const pts = pointages.filter(p => p.agentId === agent.id && monthKey(p.date) === mk);
-  const mp = monthParams.find(m => m.agentId === agent.id && m.mois === mk) || { salaireFixe: 0, primeAssiduite: 0, primePerformance: 0 };
-  const [year, month] = mk.split("-").map(Number);
-  const lastDay = new Date(year, month, 0).getDate();
-  let totalFixe = 0, joursP = 0, joursA = 0, retardTotal = 0, tempsTravailleTotal = 0;
-  for (let d = 1; d <= lastDay; d++) {
-    const dateISO = `${mk}-${String(d).padStart(2, "0")}`;
-    const c = calculDuJourRH(agent, pts, mp, dateISO);
-    if (c.estFerie) { totalFixe += c.montantJour; continue; }
-    const p = pts.find(pt => pt.date === dateISO);
-    if (!p) continue;
-    totalFixe += c.montantJour;
-    if (p.statut === "absent") {
-      joursA++;
-    } else {
-      joursP++;
-      retardTotal += (c.minutesManquantes || 0);
-      tempsTravailleTotal += (c.minutesTravaillees || 0);
-    }
-  }
-  const primeAss = mp.primeAssiduite || 0;
-  const primePerf = mp.primePerformance || 0;
-  const netDT = totalFixe + primeAss + primePerf;
-  return { netDT, netUSD: netDT * dtToUsd, joursP, joursA, retardTotal, tempsTravailleTotal };
-}
-
-// Charges sociales RDC — DÉSACTIVÉES jusqu'à nouvel ordre (contrats pas encore effectifs)
-// Taux prévus pour réactivation : CNSS salarié 5%, IPR 15%, CNSS patronal 13%, INPP 3%, ONEM 2%
-function calcChargesRDC_RH() {
-  return { cnssSal: 0, ipr: 0, cnssPat: 0, inpp: 0, onem: 0, total: 0 };
 }
 
 export default function App() {
@@ -298,13 +57,6 @@ export default function App() {
   const [campagnes, setCampagnes] = useState([]);
   const [taux, setTaux] = useState({ eurUsd: 1.08, usdCdf: 2800 });
 
-  // Données RH en lecture seule (partagées avec le Suivi RH via Supabase)
-  const [agentsRH, setAgentsRH] = useState([]);
-  const [pointagesRH, setPointagesRH] = useState([]);
-  const [monthParamsRH, setMonthParamsRH] = useState([]);
-  const [dtToUsdRH, setDtToUsdRH] = useState(DT_TO_USD_DEFAULT);
-  const [moisSelectionne, setMoisSelectionne] = useState(todayISO().slice(0, 7));
-
   // ─── Vérifier le mot de passe au démarrage ──────────────────
   useEffect(() => {
     async function checkPassword() {
@@ -320,22 +72,16 @@ export default function App() {
   useEffect(() => {
     if (!unlocked) return;
     async function loadAll() {
-      const [r, d, c, t, a, p, mp] = await Promise.all([
+      const [r, d, c, t] = await Promise.all([
         supabase.from("recettes").select("*"),
         supabase.from("depenses").select("*"),
         supabase.from("campagnes").select("*"),
         supabase.from("taux_change").select("*").eq("id", "main").maybeSingle(),
-        supabase.from("agents").select("*").order("created_at"),
-        supabase.from("pointages").select("*"),
-        supabase.from("month_params").select("*"),
       ]);
       if (r.data) setRecettes(r.data);
       if (d.data) setDepenses(d.data);
       if (c.data) setCampagnes(c.data.map(x => ({ ...x, dateDebut: x.date_debut, dateFin: x.date_fin, resultatEstime: x.resultat_estime })));
       if (t.data) setTaux({ eurUsd: t.data.eur_usd, usdCdf: t.data.usd_cdf });
-      if (a.data) setAgentsRH(a.data);
-      if (p.data) setPointagesRH(p.data.map(x => ({ ...x, agentId: x.agent_id, heureArrivee: x.heure_arrivee, heureDepart: x.heure_depart })));
-      if (mp.data) setMonthParamsRH(mp.data.map(x => ({ ...x, agentId: x.agent_id, salaireFixe: x.salaire_fixe, primePerformance: x.prime_performance, primeAssiduite: x.prime_assiduite || 0 })));
       setLoaded(true);
     }
     loadAll();
@@ -421,48 +167,35 @@ export default function App() {
   const currentMonth = monthKey(todayISO());
   const recettesUSD = useMemo(() => recettes.map(r => ({ ...r, montantUSD: convertToUSD(r.montant, r.devise, taux) })), [recettes, taux]);
   const depensesUSD = useMemo(() => depenses.map(d => ({ ...d, montantUSD: convertToUSD(d.montant, d.devise, taux) })), [depenses, taux]);
+  // Les salaires sont une catégorie de dépense à part — comptés séparément pour l'affichage,
+  // mais toujours soustraits dans le résultat net (c'est une sortie d'argent comme une autre).
+  const depensesHorsSalairesUSD = useMemo(() => depensesUSD.filter(d => d.categorie !== "Salaires"), [depensesUSD]);
+  const salairesUSD = useMemo(() => depensesUSD.filter(d => d.categorie === "Salaires"), [depensesUSD]);
   const totalRecettesMois = recettesUSD.filter(r => monthKey(r.date) === currentMonth).reduce((s, r) => s + r.montantUSD, 0);
-  const totalDepensesMois = depensesUSD.filter(d => monthKey(d.date) === currentMonth).reduce((s, d) => s + d.montantUSD, 0);
+  const totalDepensesMois = depensesHorsSalairesUSD.filter(d => monthKey(d.date) === currentMonth).reduce((s, d) => s + d.montantUSD, 0);
+  const totalSalairesMois = salairesUSD.filter(d => monthKey(d.date) === currentMonth).reduce((s, d) => s + d.montantUSD, 0);
 
-  // Agents RH séparés par localisation (lecture seule)
-  const agentsRHRDC = agentsRH.filter(a => a.localisation === "RDC" || !a.localisation);
-  const agentsRHTN = agentsRH.filter(a => a.localisation === "TN");
-  const moisRH = monthKey(moisSelectionne);
-
-  // Liste de tous les mois où il existe des données (recettes, dépenses, ou paramètres RH)
+  // Liste de tous les mois où il existe des données (recettes ou dépenses)
   const moisDisponibles = useMemo(() => {
     const set = new Set();
     recettes.forEach(r => set.add(monthKey(r.date)));
     depenses.forEach(d => set.add(monthKey(d.date)));
-    monthParamsRH.forEach(m => set.add(m.mois));
     return Array.from(set).sort().reverse();
-  }, [recettes, depenses, monthParamsRH]);
+  }, [recettes, depenses]);
 
-  // Total des salaires versés ce mois = directement calculé depuis le Suivi RH
-  // (charges sociales à la charge de l'entreprise, jamais déduites de l'agent)
-  const totalSalairesMois =
-    agentsRHRDC.reduce((s, agent) => s + calcNetRDC_RH(agent, pointagesRH, monthParamsRH, currentMonth), 0) +
-    agentsRHTN.reduce((s, agent) => s + calcNetTN_RH(agent, pointagesRH, monthParamsRH, currentMonth, dtToUsdRH).netUSD, 0);
-
-  // Total des charges sociales RDC du mois — désactivées jusqu'à nouvel ordre (toujours 0)
-  const totalChargesSocialesMois = agentsRHRDC.reduce((s, agent) => s + calcChargesRDC_RH(agent, monthParamsRH, currentMonth).total, 0);
-
-  // Résultat net = tout ce qui entre moins tout ce qui sort (recettes, dépenses, salaires, charges sociales)
-  const resultatNet = totalRecettesMois - totalDepensesMois - totalSalairesMois - totalChargesSocialesMois;
+  // Résultat net = tout ce qui entre moins tout ce qui sort (recettes − dépenses − salaires versés)
+  const resultatNet = totalRecettesMois - totalDepensesMois - totalSalairesMois;
 
   // Détail mois par mois (partagé entre "Récapitulatif mensuel" et "Trésorerie")
   const recapParMois = useMemo(() => {
     return moisDisponibles.map(mk => {
       const rec = recettesUSD.filter(r => monthKey(r.date) === mk).reduce((s, r) => s + r.montantUSD, 0);
-      const dep = depensesUSD.filter(d => monthKey(d.date) === mk).reduce((s, d) => s + d.montantUSD, 0);
-      const sal =
-        agentsRHRDC.reduce((s, a) => s + calcNetRDC_RH(a, pointagesRH, monthParamsRH, mk), 0) +
-        agentsRHTN.reduce((s, a) => s + calcNetTN_RH(a, pointagesRH, monthParamsRH, mk, dtToUsdRH).netUSD, 0);
-      const charges = agentsRHRDC.reduce((s, a) => s + calcChargesRDC_RH(a, monthParamsRH, mk).total, 0);
-      const resultat = rec - dep - sal - charges;
-      return { mk, rec, dep, sal, charges, resultat };
+      const dep = depensesHorsSalairesUSD.filter(d => monthKey(d.date) === mk).reduce((s, d) => s + d.montantUSD, 0);
+      const sal = salairesUSD.filter(d => monthKey(d.date) === mk).reduce((s, d) => s + d.montantUSD, 0);
+      const resultat = rec - dep - sal;
+      return { mk, rec, dep, sal, resultat };
     });
-  }, [moisDisponibles, recettesUSD, depensesUSD, agentsRHRDC, agentsRHTN, pointagesRH, monthParamsRH, dtToUsdRH]);
+  }, [moisDisponibles, recettesUSD, depensesHorsSalairesUSD, salairesUSD]);
 
   if (connError) return <div style={{ padding: 40, fontFamily: "sans-serif", color: "#E0656B" }}>⚠️ {connError}</div>;
   if (setupMode) return <SetupPasswordScreen newPw={newPw} setNewPw={setNewPw} newPw2={newPw2} setNewPw2={setNewPw2} onSubmit={handleSetupPassword} error={pwError} />;
@@ -476,11 +209,10 @@ export default function App() {
       <BgGlow />
       <Sidebar page={page} setPage={setPage} onLock={() => setUnlocked(false)} />
       <div className="askg-main" style={{ flex: 1, padding: "28px 36px", maxWidth: 1300, overflowX: "auto", position: "relative", zIndex: 2 }}>
-        {page === "dashboard" && <DashboardPage totalRecettesMois={totalRecettesMois} totalDepensesMois={totalDepensesMois} resultatNet={resultatNet} totalSalairesMois={totalSalairesMois} totalChargesSocialesMois={totalChargesSocialesMois} taux={taux} setTaux={updateTaux} recettesUSD={recettesUSD} />}
+        {page === "dashboard" && <DashboardPage totalRecettesMois={totalRecettesMois} totalDepensesMois={totalDepensesMois} totalSalairesMois={totalSalairesMois} resultatNet={resultatNet} taux={taux} setTaux={updateTaux} recettesUSD={recettesUSD} />}
         {page === "assistant" && <AssistantPage addDepense={addDepense} addRecette={addRecette} />}
         {page === "recettes" && <RecettesPage recettes={recettes} addRecette={addRecette} removeRecette={removeRecette} updateRecette={updateRecette} taux={taux} />}
         {page === "depenses" && <DepensesPage depenses={depenses} addDepense={addDepense} removeDepense={removeDepense} updateDepense={updateDepense} taux={taux} />}
-        {page === "salaires_rh" && <SalairesRHPage agentsRDC={agentsRHRDC} agentsTN={agentsRHTN} pointages={pointagesRH} monthParams={monthParamsRH} dtToUsd={dtToUsdRH} setDtToUsd={setDtToUsdRH} moisSelectionne={moisSelectionne} setMoisSelectionne={setMoisSelectionne} moisRH={moisRH} />}
         {page === "campagnes" && <CampagnesPage campagnes={campagnes} addCampagne={addCampagne} removeCampagne={removeCampagne} taux={taux} />}
         {page === "recap_mensuel" && <RecapMensuelPage recapParMois={recapParMois} />}
         {page === "tresorerie" && <TresoreriePage recapParMois={recapParMois} />}
@@ -875,7 +607,7 @@ function BgGlow() {
 }
 
 function Sidebar({ page, setPage, onLock }) {
-  const items = [["dashboard", "Tableau de bord"], ["assistant", "💬 Parler à Nicole"], ["recettes", "Recettes"], ["depenses", "Dépenses"], ["salaires_rh", "Salaires"], ["campagnes", "Campagnes Clients"], ["recap_mensuel", "Récapitulatif mensuel"], ["tresorerie", "Trésorerie"], ["parametres", "Paramètres"]];
+  const items = [["dashboard", "Tableau de bord"], ["assistant", "💬 Parler à Nicole"], ["recettes", "Recettes"], ["depenses", "Dépenses"], ["campagnes", "Campagnes Clients"], ["recap_mensuel", "Récapitulatif mensuel"], ["tresorerie", "Trésorerie"], ["parametres", "Paramètres"]];
   return (
     <div className="askg-sidebar" style={{ width: 240, background: "rgba(14,21,34,.9)", backdropFilter: "blur(20px)", borderRight: `1px solid ${LINE}`, color: TEXT, padding: "26px 0", flexShrink: 0, position: "relative", zIndex: 2 }}>
       <style>{RESPONSIVE_CSS}</style>
@@ -908,7 +640,7 @@ function Sidebar({ page, setPage, onLock }) {
 // ============================================================
 // PAGE : TABLEAU DE BORD
 // ============================================================
-function DashboardPage({ totalRecettesMois, totalDepensesMois, resultatNet, totalSalairesMois, totalChargesSocialesMois, taux, setTaux, recettesUSD }) {
+function DashboardPage({ totalRecettesMois, totalDepensesMois, totalSalairesMois, resultatNet, taux, setTaux, recettesUSD }) {
   const recentRecettes = [...recettesUSD].sort((a, b) => b.date.localeCompare(a.date)).slice(0, 5);
   return (
     <>
@@ -920,10 +652,9 @@ function DashboardPage({ totalRecettesMois, totalDepensesMois, resultatNet, tota
         <Kpi label="Recettes du mois" value={fmt(totalRecettesMois)} color="#4CAF7D" />
         <Kpi label="Dépenses du mois" value={fmt(totalDepensesMois)} color="#E0656B" />
         <Kpi label="Salaires versés ce mois" value={fmt(totalSalairesMois)} color="#D4A72C" />
-        <Kpi label="Charges sociales du mois" value={fmt(totalChargesSocialesMois)} color="#FD7E14" />
         <Kpi label="Résultat net" value={fmt(resultatNet)} color={resultatNet >= 0 ? "#4CAF7D" : "#E0656B"} />
       </div>
-      <div style={{ fontSize: 11, color: "#8CA3C2", marginTop: -12, marginBottom: 18 }}>ℹ️ Résultat net = Recettes − Dépenses − Salaires versés − Charges sociales, pour le mois en cours.</div>
+      <div style={{ fontSize: 11, color: "#8CA3C2", marginTop: -12, marginBottom: 18 }}>ℹ️ Résultat net = Recettes − Dépenses − Salaires versés, pour le mois en cours. Les salaires versés se saisissent manuellement dans Dépenses (catégorie "Salaires").</div>
       <Panel title="Taux de change actifs — Mets à jour selon le taux FirstBank du jour">
         <div style={{ display: "flex", gap: 24, flexWrap: "wrap" }}>
           <div><label style={labelStyle}>1 EUR =</label><div style={{ display: "flex", alignItems: "center", gap: 6 }}><input type="number" step="0.01" value={taux.eurUsd} onChange={e => setTaux({ ...taux, eurUsd: parseFloat(e.target.value) || 0 })} style={{ ...inputStyle, width: 90 }} /><span style={{ fontSize: 12, color: "#8CA3C2" }}>USD</span></div></div>
@@ -1041,114 +772,6 @@ function DepensesPage({ depenses, addDepense, removeDepense, updateDepense, taux
 }
 
 // ============================================================
-// PAGE : SALAIRES — LECTURE SEULE, DONNÉES DU SUIVI RH
-// (charges sociales assumées par l'entreprise, jamais déduites de l'agent)
-// ============================================================
-function SalairesRHPage({ agentsRDC, agentsTN, pointages, monthParams, dtToUsd, setDtToUsd, moisSelectionne, setMoisSelectionne, moisRH }) {
-  const [yLabel, mLabel] = moisSelectionne.split("-").map(Number);
-  const monthLabel = new Date(yLabel, mLabel - 1, 1).toLocaleDateString("fr-FR", { month: "long", year: "numeric" });
-  return (
-    <>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 22, flexWrap: "wrap", gap: 12 }}>
-        <div>
-          <h1 style={{ fontSize: 22, margin: 0, fontWeight: 700, color: TEXT }}>Salaires — {monthLabel}</h1>
-          <div style={{ fontSize: 12.5, color: "#8CA3C2", marginTop: 3 }}>Données en lecture seule, calculées depuis le Suivi RH</div>
-        </div>
-        <input type="month" value={moisSelectionne} onChange={e => setMoisSelectionne(e.target.value)} style={{ background: SURFACE, border: "1px solid rgba(255,255,255,.1)", padding: "8px 14px", borderRadius: 8, fontSize: 12.5, fontWeight: 600, color: TEXT }} />
-      </div>
-
-      <Panel title="💱 Taux DT → USD (indépendant de celui du Suivi RH — mets-le à jour ici aussi)">
-        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-          <label style={labelStyle}>1 DT =</label>
-          <input type="number" step="0.001" value={dtToUsd} onChange={e => setDtToUsd(parseFloat(e.target.value) || 0)} style={{ ...inputStyle, width: 100 }} />
-          <span style={{ fontSize: 12, color: "#8CA3C2" }}>USD</span>
-        </div>
-      </Panel>
-
-      <Panel title={`🇨🇩 Agents RDC (${agentsRDC.length}) — Salaire net à verser (USD)`}>
-        {agentsRDC.length === 0 ? <EmptyState text="Aucun agent RDC dans le Suivi RH." /> : (
-          <div style={{ overflowX: "auto" }}>
-            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
-              <thead><tr><Th>Agent</Th><Th>Jours travaillés</Th><Th>Jours d'absence</Th><Th>Temps travaillé</Th><Th>Retard cumulé</Th><Th>Salaire net à verser</Th></tr></thead>
-              <tbody>
-                {agentsRDC.map(agent => {
-                  const net = calcNetRDC_RH(agent, pointages, monthParams, moisRH);
-                  const det = calcDetailsRDC_RH(agent, pointages, monthParams, moisRH);
-                  return (
-                    <tr key={agent.id}>
-                      <Td><b>{agent.nom}</b></Td>
-                      <Td>{det.joursP}</Td>
-                      <Td><span style={{ background: det.joursA >= 2 ? "rgba(214,43,31,.18)" : "rgba(76,175,125,.18)", color: det.joursA >= 2 ? "#E0656B" : "#4CAF7D", padding: "2px 8px", borderRadius: 5, fontSize: 11, fontWeight: 600 }}>{det.joursA}</span></Td>
-                      <Td>{formatRetard(det.tempsTravailleTotal)}</Td>
-                      <Td>{formatRetard(det.retardTotal)}</Td>
-                      <Td><b style={{ color: "#4CAF7D", fontSize: 13 }}>{fmt(net)}</b></Td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </Panel>
-
-      <Panel title={`🏛 Charges sociales RDC (${agentsRDC.length}) — À la charge de la société, jamais déduites de l'agent`}>
-        <div style={{ fontSize: 11, color: "#E0656B", marginBottom: 10, fontWeight: 600 }}>⏸️ Désactivées jusqu'à nouvel ordre — les contrats officiels ne sont pas encore effectifs. Toutes les valeurs ci-dessous sont à 0.</div>
-        {agentsRDC.length === 0 ? <EmptyState text="Aucun agent RDC dans le Suivi RH." /> : (
-          <div style={{ overflowX: "auto" }}>
-            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
-              <thead><tr><Th>Agent</Th><Th>CNSS salarié (5%)</Th><Th>IPR (15%)</Th><Th>CNSS patronal (13%)</Th><Th>INPP (3%)</Th><Th>ONEM (2%)</Th><Th>Total charges société</Th></tr></thead>
-              <tbody>
-                {agentsRDC.map(agent => {
-                  const ch = calcChargesRDC_RH(agent, monthParams, moisRH);
-                  return (
-                    <tr key={agent.id}>
-                      <Td><b>{agent.nom}</b></Td>
-                      <Td style={{ color: "#E0656B" }}>{fmt(ch.cnssSal)}</Td>
-                      <Td style={{ color: "#E0656B" }}>{fmt(ch.ipr)}</Td>
-                      <Td style={{ color: "#FD7E14" }}>{fmt(ch.cnssPat)}</Td>
-                      <Td style={{ color: "#FD7E14" }}>{fmt(ch.inpp)}</Td>
-                      <Td style={{ color: "#FD7E14" }}>{fmt(ch.onem)}</Td>
-                      <Td><b>{fmt(ch.total)}</b></Td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </Panel>
-
-      <Panel title={`🇹🇳 Agents Tunisie (${agentsTN.length}) — Salaire net à verser (DT + équivalent USD)`}>
-        {agentsTN.length === 0 ? <EmptyState text="Aucun agent Tunisie dans le Suivi RH." /> : (
-          <div style={{ overflowX: "auto" }}>
-            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
-              <thead><tr><Th>Agent</Th><Th>Jours travaillés</Th><Th>Jours d'absence</Th><Th>Temps travaillé</Th><Th>Retard cumulé</Th><Th>Salaire net à verser (DT)</Th><Th>Équivalent (USD)</Th></tr></thead>
-              <tbody>
-                {agentsTN.map(agent => {
-                  const r = calcNetTN_RH(agent, pointages, monthParams, moisRH, dtToUsd);
-                  return (
-                    <tr key={agent.id}>
-                      <Td><b>{agent.nom}</b></Td>
-                      <Td>{r.joursP}</Td>
-                      <Td><span style={{ background: "rgba(76,175,125,.18)", color: "#4CAF7D", padding: "2px 8px", borderRadius: 5, fontSize: 11, fontWeight: 600 }}>{r.joursA}</span></Td>
-                      <Td>{formatRetard(r.tempsTravailleTotal)}</Td>
-                      <Td>{formatRetard(r.retardTotal)}</Td>
-                      <Td><b style={{ color: "#D4A72C", fontSize: 13 }}>{fmt(r.netDT, "DT")}</b></Td>
-                      <Td><b style={{ color: "#4CAF7D" }}>{fmt(r.netUSD)}</b></Td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </Panel>
-      <div style={{ fontSize: 11, color: "#8CA3C2" }}>ℹ️ Cette section reflète automatiquement ce qui est saisi dans le Suivi RH (agents, pointages, primes). Elle n'est pas modifiable ici.</div>
-    </>
-  );
-}
-
-// ============================================================
 // PAGE : CAMPAGNES CLIENTS
 // ============================================================
 function CampagnesPage({ campagnes, addCampagne, removeCampagne, taux }) {
@@ -1187,7 +810,7 @@ function CampagnesPage({ campagnes, addCampagne, removeCampagne, taux }) {
 
 // ============================================================
 // PAGE : RÉCAPITULATIF MENSUEL — Vue d'ensemble mois par mois
-// (recettes / dépenses / salaires / charges sociales / résultat net)
+// (recettes / dépenses / salaires versés / résultat net)
 // ============================================================
 function RecapMensuelPage({ recapParMois }) {
   function labelMois(mk) {
@@ -1206,7 +829,7 @@ function RecapMensuelPage({ recapParMois }) {
         {parMoisDesc.length === 0 ? <EmptyState text="Aucune donnée enregistrée encore." /> : (
           <div style={{ overflowX: "auto" }}>
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
-              <thead><tr><Th>Mois</Th><Th>Recettes</Th><Th>Dépenses</Th><Th>Salaires versés</Th><Th>Charges sociales</Th><Th>Résultat net</Th></tr></thead>
+              <thead><tr><Th>Mois</Th><Th>Recettes</Th><Th>Dépenses</Th><Th>Salaires versés</Th><Th>Résultat net</Th></tr></thead>
               <tbody>
                 {parMoisDesc.map(c => (
                   <tr key={c.mk}>
@@ -1214,7 +837,6 @@ function RecapMensuelPage({ recapParMois }) {
                     <Td style={{ color: "#4CAF7D" }}>{fmt(c.rec)}</Td>
                     <Td style={{ color: "#E0656B" }}>{fmt(c.dep)}</Td>
                     <Td style={{ color: "#D4A72C" }}>{fmt(c.sal)}</Td>
-                    <Td style={{ color: "#FD7E14" }}>{fmt(c.charges)}</Td>
                     <Td><b style={{ color: c.resultat >= 0 ? "#4CAF7D" : "#E0656B", fontSize: 13 }}>{fmt(c.resultat)}</b></Td>
                   </tr>
                 ))}
@@ -1223,7 +845,7 @@ function RecapMensuelPage({ recapParMois }) {
           </div>
         )}
       </Panel>
-      <div style={{ fontSize: 11, color: "#8CA3C2" }}>ℹ️ Résultat net = Recettes − Dépenses − Salaires versés − Charges sociales, pour le mois concerné.</div>
+      <div style={{ fontSize: 11, color: "#8CA3C2" }}>ℹ️ Résultat net = Recettes − Dépenses − Salaires versés, pour le mois concerné. Les salaires versés sont les dépenses saisies avec la catégorie "Salaires".</div>
     </>
   );
 }
@@ -1245,20 +867,20 @@ function TresoreriePage({ recapParMois }) {
   });
   const soldeActuel = avecCumul.length ? avecCumul[avecCumul.length - 1].cumul : 0;
   const totalEntrees = recapParMois.reduce((s, c) => s + c.rec, 0);
-  const totalSorties = recapParMois.reduce((s, c) => s + c.dep + c.sal + c.charges, 0);
+  const totalSorties = recapParMois.reduce((s, c) => s + c.dep + c.sal, 0);
   const maxAbs = Math.max(1, ...avecCumul.map(c => Math.abs(c.resultat)));
 
   return (
     <>
       <div style={{ marginBottom: 22 }}>
         <h1 style={{ fontSize: 22, margin: 0, fontWeight: 700, color: TEXT }}>Trésorerie</h1>
-        <div style={{ fontSize: 12.5, color: "#8CA3C2", marginTop: 3 }}>Solde réel dans la caisse, tous mois confondus (recettes − dépenses − salaires − charges sociales)</div>
+        <div style={{ fontSize: 12.5, color: "#8CA3C2", marginTop: 3 }}>Solde réel dans la caisse, tous mois confondus (recettes − dépenses − salaires versés)</div>
       </div>
 
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 14, marginBottom: 22 }}>
         <Kpi label="Solde de trésorerie actuel" value={fmt(soldeActuel)} color={soldeActuel >= 0 ? "#4CAF7D" : "#E0656B"} />
         <Kpi label="Total entrées (toutes recettes)" value={fmt(totalEntrees)} color="#4CAF7D" />
-        <Kpi label="Total sorties (dépenses + salaires + charges)" value={fmt(totalSorties)} color="#E0656B" />
+        <Kpi label="Total sorties (dépenses + salaires)" value={fmt(totalSorties)} color="#E0656B" />
       </div>
 
       <Panel title="Évolution mois par mois">
@@ -1282,7 +904,7 @@ function TresoreriePage({ recapParMois }) {
                     <tr key={c.mk}>
                       <Td><b style={{ textTransform: "capitalize" }}>{labelMois(c.mk)}</b></Td>
                       <Td style={{ color: "#4CAF7D" }}>{fmt(c.rec)}</Td>
-                      <Td style={{ color: "#E0656B" }}>{fmt(c.dep + c.sal + c.charges)}</Td>
+                      <Td style={{ color: "#E0656B" }}>{fmt(c.dep + c.sal)}</Td>
                       <Td><b style={{ color: c.resultat >= 0 ? "#4CAF7D" : "#E0656B" }}>{fmt(c.resultat)}</b></Td>
                       <Td><b style={{ color: c.cumul >= 0 ? "#4CAF7D" : "#E0656B", fontSize: 13 }}>{fmt(c.cumul)}</b></Td>
                     </tr>
@@ -1293,7 +915,7 @@ function TresoreriePage({ recapParMois }) {
           </>
         )}
       </Panel>
-      <div style={{ fontSize: 11, color: "#8CA3C2" }}>ℹ️ Calculé uniquement à partir des recettes/dépenses/salaires saisis dans le logiciel — sans solde de départ.</div>
+      <div style={{ fontSize: 11, color: "#8CA3C2" }}>ℹ️ Calculé uniquement à partir des recettes/dépenses/salaires saisis dans le logiciel — sans solde de départ. La colonne "Solde cumulé" te montre le solde actuel de trésorerie mois par mois.</div>
     </>
   );
 }
