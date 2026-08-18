@@ -666,12 +666,20 @@ function AssistantPage({ addDepense, addRecette }) {
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SR) { window.alert("La dictée vocale n'est pas prise en charge par ce navigateur. Tu peux quand même taper le texte."); return; }
     if (ecoute) { recognitionRef.current?.stop(); return; }
+    const texteDeDepart = texte ? texte + " " : "";
+    let finalAccumule = "";
     const recognition = new SR();
     recognition.lang = "fr-FR";
-    recognition.interimResults = false;
+    recognition.continuous = true;   // continue d'écouter tant qu'on n'a pas cliqué sur "Arrêter"
+    recognition.interimResults = true; // affiche le texte en direct pendant qu'on parle
     recognition.onresult = (e) => {
-      const transcript = e.results[0][0].transcript;
-      setTexte(prev => (prev ? prev + " " : "") + transcript);
+      let interim = "";
+      for (let i = e.resultIndex; i < e.results.length; i++) {
+        const transcript = e.results[i][0].transcript;
+        if (e.results[i].isFinal) finalAccumule += transcript + " ";
+        else interim += transcript;
+      }
+      setTexte(texteDeDepart + finalAccumule + interim);
     };
     recognition.onend = () => setEcoute(false);
     recognition.onerror = () => setEcoute(false);
